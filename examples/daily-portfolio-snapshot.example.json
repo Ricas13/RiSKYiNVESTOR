@@ -1,0 +1,18 @@
+{
+  "snapshotId": "snapshot-fictional-2026-06-19",
+  "timestamp": "2026-06-19T21:00:00.000Z",
+  "date": "2026-06-19",
+  "actualPortfolioValue": null,
+  "modelPortfolioValue": 12500,
+  "actualDailyPnl": null,
+  "modelDailyPnl": 84.5,
+  "realisedPnl": null,
+  "unrealisedPnl": null,
+  "contributions": null,
+  "withdrawals": null,
+  "currentDrawdownPercent": -3.2,
+  "cashValue": null,
+  "investedValue": null,
+  "source": "supertrend_alerts",
+  "scannerRunId": "run-fictional-20260619-200000"
+}

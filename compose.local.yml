@@ -1,0 +1,7 @@
+services:
+  app:
+    environment:
+      NODE_ENV: development
+      TRUST_PROXY: "0"
+    ports:
+      - "127.0.0.1:${LOCAL_PORT:-4180}:4180"

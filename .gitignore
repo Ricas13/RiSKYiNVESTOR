@@ -1,0 +1,54 @@
+node_modules
+dist
+.DS_Store
+*.local
+.env*
+!.env.example
+!.env.docker.example
+!deploy/traefik/.env.example
+*.tsbuildinfo
+dist-server
+data/private/*.json
+data/private/model/*.json
+!data/private/*.example.json
+!data/private/model/*.example.json
+*.sqlite
+*.sqlite3
+*.db
+secrets/*
+!secrets/README.md
+!secrets/*.example
+
+# Production-only secrets and persisted data
+secrets/
+.env
+.env.*
+!.env.example
+data/private/
+
+# Production-only secrets and persisted data
+secrets/
+.env
+.env.*
+!.env.example
+data/private/
+
+# Secrets and production configuration
+secrets/
+.env
+.env.*
+*.pem
+*.key
+
+# Private persistent/runtime data
+data/private/
+data/scanner/
+
+# Local/generated files
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+docker-compose.override.yml
+compose.override.yml

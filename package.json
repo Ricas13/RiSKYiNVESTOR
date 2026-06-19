@@ -1,0 +1,47 @@
+{
+  "name": "risky-investor-dashboard",
+  "private": true,
+  "version": "2.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.12.1",
+  "scripts": {
+    "dev": "concurrently -k -n web,server \"vite\" \"tsx watch server/index.ts\"",
+    "build": "tsc -b && vite build && tsc -p tsconfig.server.json",
+    "start": "node dist-server/index.js",
+    "preview": "npm run build && npm run start",
+    "lint": "eslint .",
+    "test": "tsc -b && vite build && tsc -p tsconfig.server.json && node --test tests/server.integration.test.mjs tests/store.test.mjs tests/signal-events.test.mjs tests/notifications.test.mjs",
+    "test:server": "node --test tests/server.integration.test.mjs tests/store.test.mjs tests/signal-events.test.mjs tests/notifications.test.mjs",
+    "hash-password": "tsx scripts/hash-password.ts"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^3.8.1",
+    "vite": "^6.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.19.0",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.30",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "concurrently": "^9.2.0",
+    "eslint": "^9.19.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "eslint-plugin-react-refresh": "^0.4.18",
+    "globals": "^15.14.0",
+    "tsx": "^4.19.4",
+    "typescript": "~5.7.2",
+    "typescript-eslint": "^8.22.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

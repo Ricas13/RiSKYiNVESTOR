@@ -1,0 +1,29 @@
+services:
+  app:
+    networks:
+      - default
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik_proxy}"
+      - "traefik.http.services.${TRAEFIK_SERVICE:-risky-investor}.loadbalancer.server.port=4180"
+      - "traefik.http.services.${TRAEFIK_SERVICE:-risky-investor}.loadbalancer.healthcheck.path=/healthz"
+      - "traefik.http.services.${TRAEFIK_SERVICE:-risky-investor}.loadbalancer.healthcheck.interval=30s"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-risky-investor}.rule=Host(`${RISKY_INVESTOR_DOMAIN:-riskyinvestor.co.uk}`) || Host(`${RISKY_INVESTOR_WWW_DOMAIN:-www.riskyinvestor.co.uk}`)"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-risky-investor}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-risky-investor}.tls=true"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-risky-investor}.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-risky-investor}.service=${TRAEFIK_SERVICE:-risky-investor}"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-risky-investor}.middlewares=${TRAEFIK_ROUTER:-risky-investor}-compress@docker"
+      - "traefik.http.middlewares.${TRAEFIK_ROUTER:-risky-investor}-compress.compress=true"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-risky-investor}-http.rule=Host(`${RISKY_INVESTOR_DOMAIN:-riskyinvestor.co.uk}`) || Host(`${RISKY_INVESTOR_WWW_DOMAIN:-www.riskyinvestor.co.uk}`)"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-risky-investor}-http.entrypoints=${TRAEFIK_HTTP_ENTRYPOINT:-web}"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-risky-investor}-http.service=${TRAEFIK_SERVICE:-risky-investor}"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-risky-investor}-http.middlewares=${TRAEFIK_ROUTER:-risky-investor}-https-redirect@docker"
+      - "traefik.http.middlewares.${TRAEFIK_ROUTER:-risky-investor}-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.${TRAEFIK_ROUTER:-risky-investor}-https-redirect.redirectscheme.permanent=true"
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_proxy}
