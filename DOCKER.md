@@ -16,9 +16,10 @@ promoted, rolled back, or run as an isolated preview stack.
 - Traefik HTTP-to-HTTPS routing and Let's Encrypt support
 - Separate Compose project names, router names, domains, and volumes for branch previews
 
-The image contains fake `*.example.json` fixtures only. Real records, secret
-files, `.env` files, build output, and local databases are excluded from the
-Docker build context.
+The runtime image contains an empty writable private-data directory. It does
+not copy `*.example.json` fixtures into the image or use them during startup.
+Real records, secret files, `.env` files, build output, and local databases are
+excluded from the Docker build context.
 
 ## 1. Prepare deployment settings
 

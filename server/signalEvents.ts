@@ -531,39 +531,63 @@ function eventDeduplicationKey(event: SignalEvent) {
 }
 
 export class SignalEventRepository {
+  private legacyFallback: Array<Record<string, unknown>> = [];
+
   constructor(
     private readonly store: JsonStore,
     private readonly filePath = "signal_events.json",
   ) {}
 
   async initialiseFromLegacy(legacy: Array<Record<string, unknown>>) {
-    const raw = await this.store.read<Record<string, unknown>>(this.filePath);
-    const rawEvents = Array.isArray(raw.events) ? raw.events : [];
-    if (raw.version === 2) return this.read();
-
-    const sourceEvents = rawEvents.length ? rawEvents : legacy;
-    const file: SignalEventFile = {
-      version: 2,
-      isExample: Boolean(raw.isExample),
-      notice:
-        optionalText(raw.notice) ||
-        (sourceEvents.length
-          ? "Legacy records were retained without deriving new signals from trend colours."
-          : "Awaiting scanner data."),
-      events: sourceEvents.map(migrateLegacySignalEvent),
-    };
-    await this.store.write(this.filePath, file);
-    return file;
+    this.legacyFallback = legacy;
+    return this.read();
   }
 
   async read(): Promise<SignalEventFile> {
-    const file = await this.store.read<SignalEventFile>(this.filePath);
+    const raw = await this.store.read<
+      SignalEventFile | SignalEvent[] | Record<string, unknown>
+    >(this.filePath);
+    const file: SignalEventFile = (() => {
+      if (Array.isArray(raw)) {
+        return {
+          version: 2,
+          isExample: false,
+          notice: raw.length ? undefined : "Awaiting scanner data.",
+          events: raw,
+        };
+      }
+      if (raw.version === 2) return raw as unknown as SignalEventFile;
+      const rawEvents = Array.isArray(raw.events) ? raw.events : [];
+      const sourceEvents = rawEvents.length
+        ? rawEvents
+        : this.legacyFallback;
+      return {
+        version: 2,
+        isExample: Boolean(raw.isExample),
+        notice:
+          optionalText(raw.notice) ||
+          (sourceEvents.length
+            ? "Legacy records were retained without deriving new signals from trend colours."
+            : "Awaiting scanner data."),
+        events: sourceEvents.map(migrateLegacySignalEvent),
+      };
+    })();
     return {
       ...file,
       events: [...file.events].sort((a, b) =>
         b.occurredAt.localeCompare(a.occurredAt),
       ),
     };
+  }
+
+  private async writeEvents(file: SignalEventFile) {
+    const raw = await this.store.read<SignalEventFile | SignalEvent[]>(
+      this.filePath,
+    );
+    await this.store.write(
+      this.filePath,
+      Array.isArray(raw) ? file.events : file,
+    );
   }
 
   async saveCanonical(values: unknown[]) {
@@ -592,7 +616,7 @@ export class SignalEventRepository {
     }
 
     if (accepted.length) {
-      await this.store.write<SignalEventFile>(this.filePath, {
+      await this.writeEvents({
         version: 2,
         isExample: false,
         events: [...byId.values()].sort((a, b) =>
@@ -645,7 +669,7 @@ export class SignalEventRepository {
     event.isAcknowledged = acknowledged;
     event.updatedAt = new Date().toISOString();
     file.isExample = false;
-    await this.store.write(this.filePath, file);
+    await this.writeEvents(file);
     return event;
   }
 
@@ -663,12 +687,20 @@ export class SignalEventRepository {
 export class AlertDeliveryRepository {
   constructor(
     private readonly store: JsonStore,
-    private readonly filePath = "notification_deliveries.json",
+    private readonly filePath = "alert_deliveries.json",
   ) {}
 
   async initialise() {
-    const raw = await this.store.read<Record<string, unknown>>(this.filePath);
-    if (raw.version === 2) return this.read();
+    return this.read();
+  }
+
+  private normalise(
+    raw: AlertDeliveryFile | AlertDelivery[] | Record<string, unknown>,
+  ): AlertDeliveryFile {
+    if (Array.isArray(raw)) {
+      return { version: 2, isExample: false, deliveries: raw };
+    }
+    if (raw.version === 2) return raw as unknown as AlertDeliveryFile;
     const legacy = Array.isArray(raw.deliveries) ? raw.deliveries : [];
     const deliveries = legacy.map((value): AlertDelivery => {
       const input = record(value);
@@ -721,18 +753,36 @@ export class AlertDeliveryRepository {
         message: optionalText(input.message, 2_000),
       };
     });
-    await this.store.write<AlertDeliveryFile>(this.filePath, {
+    return {
       version: 2,
       isExample: Boolean(raw.isExample),
       deliveries,
-    });
-    return deliveries;
+    };
   }
 
   async read() {
-    const file = await this.store.read<AlertDeliveryFile>(this.filePath);
-    return [...file.deliveries].sort((a, b) =>
+    const raw = await this.store.read<
+      AlertDeliveryFile | AlertDelivery[] | Record<string, unknown>
+    >(this.filePath);
+    return [...this.normalise(raw).deliveries].sort((a, b) =>
       b.attemptedAt.localeCompare(a.attemptedAt),
+    );
+  }
+
+  private async readFile(): Promise<AlertDeliveryFile> {
+    const raw = await this.store.read<
+      AlertDeliveryFile | AlertDelivery[] | Record<string, unknown>
+    >(this.filePath);
+    return this.normalise(raw);
+  }
+
+  private async writeFile(file: AlertDeliveryFile) {
+    const raw = await this.store.read<AlertDeliveryFile | AlertDelivery[]>(
+      this.filePath,
+    );
+    await this.store.write(
+      this.filePath,
+      Array.isArray(raw) ? file.deliveries : file,
     );
   }
 
@@ -745,7 +795,7 @@ export class AlertDeliveryRepository {
     if (!deliveryStatuses.has(input.status)) {
       throw new Error("Unsupported alert delivery status.");
     }
-    const file = await this.store.read<AlertDeliveryFile>(this.filePath);
+    const file = await this.readFile();
     const delivery: AlertDelivery = {
       ...input,
       deliveryId: input.deliveryId || randomUUID(),
@@ -760,18 +810,18 @@ export class AlertDeliveryRepository {
     file.isExample = false;
     file.deliveries.unshift(delivery);
     file.deliveries = file.deliveries.slice(0, 5_000);
-    await this.store.write(this.filePath, file);
+    await this.writeFile(file);
     return delivery;
   }
 
   async prune(maximum: number) {
-    const file = await this.store.read<AlertDeliveryFile>(this.filePath);
+    const file = await this.readFile();
     const limit = Math.min(5_000, Math.max(100, Math.floor(maximum)));
     if (file.deliveries.length <= limit) return file.deliveries.length;
     file.deliveries = file.deliveries
       .sort((a, b) => b.attemptedAt.localeCompare(a.attemptedAt))
       .slice(0, limit);
-    await this.store.write(this.filePath, file);
+    await this.writeFile(file);
     return file.deliveries.length;
   }
 
@@ -802,7 +852,7 @@ export class AlertDeliveryRepository {
       >
     >,
   ) {
-    const file = await this.store.read<AlertDeliveryFile>(this.filePath);
+    const file = await this.readFile();
     const delivery = file.deliveries.find(
       (item) => item.deliveryId === deliveryId,
     );
@@ -834,7 +884,7 @@ export class AlertDeliveryRepository {
       delivery.message = patch.message?.slice(0, 2_000);
     }
     file.isExample = false;
-    await this.store.write(this.filePath, file);
+    await this.writeFile(file);
     return delivery;
   }
 
@@ -896,14 +946,28 @@ export class DailyPortfolioSnapshotRepository {
   ) {}
 
   async read() {
-    const file =
-      await this.store.read<DailyPortfolioSnapshotFile>(this.filePath);
+    const raw = await this.store.read<
+      DailyPortfolioSnapshotFile | DailyPortfolioSnapshot[]
+    >(this.filePath);
+    const file: DailyPortfolioSnapshotFile = Array.isArray(raw)
+      ? { version: 1, isExample: false, snapshots: raw }
+      : raw;
     return {
       ...file,
       snapshots: [...file.snapshots].sort((a, b) =>
         b.timestamp.localeCompare(a.timestamp),
       ),
     };
+  }
+
+  private async writeSnapshots(file: DailyPortfolioSnapshotFile) {
+    const raw = await this.store.read<
+      DailyPortfolioSnapshotFile | DailyPortfolioSnapshot[]
+    >(this.filePath);
+    await this.store.write(
+      this.filePath,
+      Array.isArray(raw) ? file.snapshots : file,
+    );
   }
 
   async save(values: unknown[]) {
@@ -926,7 +990,7 @@ export class DailyPortfolioSnapshotRepository {
       dedup.add(key);
     }
     if (accepted.length) {
-      await this.store.write<DailyPortfolioSnapshotFile>(this.filePath, {
+      await this.writeSnapshots({
         version: 1,
         isExample: false,
         snapshots: [...byId.values()].sort((a, b) =>

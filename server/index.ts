@@ -30,6 +30,7 @@ import {
   DailyPortfolioSnapshotRepository,
   SignalEventRepository,
 } from "./signalEvents.js";
+import { initialiseRuntimeData } from "./runtimeData.js";
 import { JsonStore } from "./store.js";
 
 interface TradeExit {
@@ -161,7 +162,7 @@ const projectRoot = process.cwd();
 const dataRoot = path.resolve(
   process.env.PRIVATE_DATA_DIR ?? path.join(projectRoot, "data", "private"),
 );
-const store = new JsonStore(dataRoot, path.join(projectRoot, "data", "private"));
+const store = new JsonStore(dataRoot);
 const app = express();
 const port = Number(process.env.PORT ?? 4180);
 
@@ -220,37 +221,10 @@ app.get("/healthz", (_request, response) => {
   response.json({ status: "ok" });
 });
 
-const seedFiles = [
-  ["manual_trades.json", "manual_trades.example.json"],
-  ["open_positions.json", "open_positions.example.json"],
-  ["closed_trades.json", "closed_trades.example.json"],
-  ["wealth_snapshots.json", "wealth_snapshots.example.json"],
-  ["cash_flows.json", "cash_flows.example.json"],
-  ["account.json", "account.example.json"],
-  ["strategies.json", "strategies.example.json"],
-  ["settings.json", "settings.example.json"],
-  ["signal_events.json", "signal_events.example.json"],
-  [
-    "daily_portfolio_snapshots.json",
-    "daily_portfolio_snapshots.example.json",
-  ],
-  ["scanner_import_state.json", "scanner_import_state.example.json"],
-  ["notification_settings.json", "notification_settings.example.json"],
-  ["notification_deliveries.json", "notification_deliveries.example.json"],
-  ["notification_credentials.json", "notification_credentials.example.json"],
-  ["signal_decisions.json", "signal_decisions.example.json"],
-  ["alerts.json", "alerts.example.json"],
-  ["model/latest_summary.json", "model/latest_summary.example.json"],
-  ["model/watchlist_status.json", "model/watchlist_status.example.json"],
-  ["model/signals_today.json", "model/signals_today.example.json"],
-  ["model/signals_archive.json", "model/signals_archive.example.json"],
-  ["model/open_trades.json", "model/open_trades.example.json"],
-  ["model/closed_trades.json", "model/closed_trades.example.json"],
-  ["model/performance.json", "model/performance.example.json"],
-  ["model/site_config.json", "model/site_config.example.json"],
-] as const;
-
-await Promise.all(seedFiles.map(([target, example]) => store.ensure(target, example)));
+await initialiseRuntimeData(store, {
+  username,
+  role: configuredRole,
+});
 
 const signalEventRepository = new SignalEventRepository(store);
 const alertDeliveryRepository = new AlertDeliveryRepository(store);
@@ -260,9 +234,14 @@ const notificationDispatcher = new NotificationDispatcher(
   store,
   alertDeliveryRepository,
   async () => {
-    const stored = await store.read<NotificationCredentials>(
-      "notification_credentials.json",
-    );
+    const stored =
+      (await store.readOptional<NotificationCredentials>(
+        "notification_credentials.json",
+      )) ?? {
+        version: 1,
+        discordWebhookUrl: null,
+        whatsapp: {},
+      };
     const environmentWebhook = secretValue(
       "RISKY_INVESTOR_DISCORD_WEBHOOK_URL",
     )?.trim();
@@ -274,9 +253,9 @@ const notificationDispatcher = new NotificationDispatcher(
   },
 );
 await signalEventRepository.initialiseFromLegacy(
-  await store.read<Array<Record<string, unknown>>>(
+  (await store.readOptional<Array<Record<string, unknown>>>(
     "model/signals_archive.json",
-  ),
+  )) ?? [],
 );
 await alertDeliveryRepository.initialise();
 const scannerImportService = new ScannerImportService(
@@ -579,7 +558,7 @@ const backupPaths = {
   dailyPortfolioSnapshots: "daily_portfolio_snapshots.json",
   scannerImportState: "scanner_import_state.json",
   notificationSettings: "notification_settings.json",
-  notificationDeliveries: "notification_deliveries.json",
+  notificationDeliveries: "alert_deliveries.json",
   manualTrades: "manual_trades.json",
   wealthSnapshots: "wealth_snapshots.json",
   cashFlows: "cash_flows.json",

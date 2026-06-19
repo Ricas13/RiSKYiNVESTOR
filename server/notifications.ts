@@ -440,11 +440,7 @@ export class NotificationDispatcher {
     const raw = await this.store.read<Partial<NotificationSettings>>(
       "notification_settings.json",
     );
-    const settings = normaliseSettings(raw);
-    if (raw.version !== 2) {
-      await this.store.write("notification_settings.json", settings);
-    }
-    return settings;
+    return normaliseSettings(raw);
   }
 
   async publicState() {

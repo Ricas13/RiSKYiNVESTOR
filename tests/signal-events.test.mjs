@@ -54,7 +54,7 @@ async function repositories(root) {
       isExample: true,
       events: [],
     }),
-    store.write("notification_deliveries.json", {
+    store.write("alert_deliveries.json", {
       version: 2,
       isExample: true,
       deliveries: [],

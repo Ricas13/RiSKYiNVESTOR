@@ -37,14 +37,15 @@ ENV NODE_ENV=production \
     APP_VERSION=${APP_VERSION}
 
 RUN addgroup -S -g 10001 riskyinvestor \
-    && adduser -S -D -H -u 10001 -G riskyinvestor riskyinvestor
+    && adduser -S -D -H -u 10001 -G riskyinvestor riskyinvestor \
+    && mkdir -p /app/data/private \
+    && chown -R riskyinvestor:riskyinvestor /app/data
 
 WORKDIR /app
 COPY --from=production-dependencies --chown=riskyinvestor:riskyinvestor /app/node_modules ./node_modules
 COPY --from=build --chown=riskyinvestor:riskyinvestor /app/dist ./dist
 COPY --from=build --chown=riskyinvestor:riskyinvestor /app/dist-server ./dist-server
 COPY --chown=riskyinvestor:riskyinvestor package.json ./
-COPY --chown=riskyinvestor:riskyinvestor data/private ./data/private
 
 USER riskyinvestor
 EXPOSE 4180

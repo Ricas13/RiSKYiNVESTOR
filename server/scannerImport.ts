@@ -293,6 +293,13 @@ export class ScannerImportService {
         path.join(this.sourceDirectory, "latest-scan.json"),
       );
       if (!latestRaw) {
+        if (
+          previous.status === "awaiting" &&
+          !previous.lastSuccessfulScanAt &&
+          !previous.lastError
+        ) {
+          return previous;
+        }
         const state: ScannerImportStateFile = {
           ...previous,
           version: 1,
