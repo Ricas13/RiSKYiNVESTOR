@@ -167,7 +167,7 @@ async function fixture(provider = new FakeDiscordProvider()) {
       discordWebhookUrl: null,
       whatsapp: {},
     }),
-    store.write("notification_deliveries.json", {
+    store.write("alert_deliveries.json", {
       version: 2,
       isExample: false,
       deliveries: [],

@@ -114,8 +114,7 @@ See [DOCKER.md](./DOCKER.md) for:
 
 ## Private JSON data
 
-On first server start, the application copies clearly marked fake fixtures into
-ignored private files:
+The tracked fake fixtures illustrate the private file shapes:
 
 ```text
 data/private/
@@ -134,8 +133,9 @@ data/private/
     └── site_config.json
 ```
 
-Only the corresponding `*.example.json` fixtures are committed or included as
-portable samples. Every fixture is fake and labelled as example data.
+Production startup never reads `*.example.json`. Missing runtime-owned files
+are created inside `PRIVATE_DATA_DIR` with empty or disabled defaults; existing
+valid files are left untouched and malformed JSON is never replaced.
 
 The server uses atomic temporary-file replacement when saving JSON. The
 `open_positions.json` and `closed_trades.json` views are regenerated from

@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { scryptSync } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +20,46 @@ const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+const exampleRoot = path.join(projectRoot, "data", "private");
+
+const dashboardFixtures = [
+  ["manual_trades.example.json", "manual_trades.json"],
+  ["open_positions.example.json", "open_positions.json"],
+  ["closed_trades.example.json", "closed_trades.json"],
+  ["wealth_snapshots.example.json", "wealth_snapshots.json"],
+  ["cash_flows.example.json", "cash_flows.json"],
+  ["account.example.json", "account.json"],
+  ["strategies.example.json", "strategies.json"],
+  ["settings.example.json", "settings.json"],
+  ["signal_events.example.json", "signal_events.json"],
+  [
+    "daily_portfolio_snapshots.example.json",
+    "daily_portfolio_snapshots.json",
+  ],
+  ["scanner_import_state.example.json", "scanner_import_state.json"],
+  ["notification_settings.example.json", "notification_settings.json"],
+  ["notification_deliveries.example.json", "alert_deliveries.json"],
+  ["notification_credentials.example.json", "notification_credentials.json"],
+  ["signal_decisions.example.json", "signal_decisions.json"],
+  ["alerts.example.json", "alerts.json"],
+  ["model/latest_summary.example.json", "model/latest_summary.json"],
+  ["model/watchlist_status.example.json", "model/watchlist_status.json"],
+  ["model/signals_today.example.json", "model/signals_today.json"],
+  ["model/signals_archive.example.json", "model/signals_archive.json"],
+  ["model/open_trades.example.json", "model/open_trades.json"],
+  ["model/closed_trades.example.json", "model/closed_trades.json"],
+  ["model/performance.example.json", "model/performance.json"],
+  ["model/site_config.example.json", "model/site_config.json"],
+];
+
+async function seedDashboardFixtures(privateData) {
+  await mkdir(path.join(privateData, "model"), { recursive: true });
+  await Promise.all(
+    dashboardFixtures.map(([source, target]) =>
+      copyFile(path.join(exampleRoot, source), path.join(privateData, target)),
+    ),
+  );
+}
 
 function passwordHash(password) {
   const salt = "integration-test-salt";
@@ -48,27 +95,30 @@ async function waitForServer(child) {
     errors += chunk;
   });
 
-  await Promise.race([
-    new Promise((resolve, reject) => {
-      const interval = setInterval(() => {
-        if (output.includes("private server listening")) {
-          clearInterval(interval);
-          resolve();
-        } else if (child.exitCode !== null) {
-          clearInterval(interval);
-          reject(
-            new Error(`Server exited before startup.\n${output}\n${errors}`),
-          );
-        }
-      }, 25);
-    }),
-    new Promise((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`Server startup timed out.\n${output}\n${errors}`)),
-        10_000,
-      ),
-    ),
-  ]);
+  await new Promise((resolve, reject) => {
+    const finish = (error) => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve();
+    };
+    const interval = setInterval(() => {
+      if (output.includes("private server listening")) {
+        finish();
+      } else if (child.exitCode !== null) {
+        finish(
+          new Error(`Server exited before startup.\n${output}\n${errors}`),
+        );
+      }
+    }, 25);
+    const timeout = setTimeout(
+      () =>
+        finish(
+          new Error(`Server startup timed out.\n${output}\n${errors}`),
+        ),
+      10_000,
+    );
+  });
 }
 
 async function json(response) {
@@ -86,6 +136,7 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
   const usernameFile = path.join(privateData, "test-username");
   const passwordHashFile = path.join(privateData, "test-password-hash");
   const sessionSecretFile = path.join(privateData, "test-session-secret");
+  await seedDashboardFixtures(privateData);
   await Promise.all([
     writeFile(usernameFile, username, "utf8"),
     writeFile(passwordHashFile, passwordHash(password), "utf8"),
