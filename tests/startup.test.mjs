@@ -84,6 +84,7 @@ function startServer(privateData, port, applicationRoot, extraEnvironment = {}) 
       RISKY_INVESTOR_PASSWORD_HASH: passwordHash(password),
       SESSION_SECRET:
         "startup-test-session-secret-that-is-longer-than-thirty-two-characters",
+      RISKY_INVESTOR_CREDENTIAL_ENCRYPTION_KEY_FILE: "",
       RISKY_INVESTOR_CREDENTIAL_ENCRYPTION_KEY:
         "startup-test-credential-encryption-key-32-bytes-minimum",
       ...extraEnvironment,
