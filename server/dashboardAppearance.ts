@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 export const defaultDashboardAppearance = {
   theme: "midnight",
   density: "comfortable",
@@ -10,6 +12,10 @@ export interface DashboardAppearance {
   theme: DashboardTheme;
   density: DashboardDensity;
 }
+
+const requestAppearance = new AsyncLocalStorage<
+  DashboardAppearance | undefined
+>();
 
 export function normaliseDashboardAppearance(
   value: unknown,
@@ -38,4 +44,18 @@ export function withDashboardAppearance<T extends Record<string, unknown>>(
     ...settings,
     appearance: normaliseDashboardAppearance(settings.appearance),
   };
+}
+
+export function runWithDashboardAppearance(
+  value: unknown,
+  callback: () => void,
+) {
+  return requestAppearance.run(
+    value === undefined ? undefined : normaliseDashboardAppearance(value),
+    callback,
+  );
+}
+
+export function currentDashboardAppearance() {
+  return requestAppearance.getStore();
 }
