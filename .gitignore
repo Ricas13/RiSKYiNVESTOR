@@ -15,40 +15,9 @@ data/private/model/*.json
 *.sqlite
 *.sqlite3
 *.db
+__pycache__/
+*.py[cod]
+.pytest_cache/
 secrets/*
 !secrets/README.md
 !secrets/*.example
-
-# Production-only secrets and persisted data
-secrets/
-.env
-.env.*
-!.env.example
-data/private/
-
-# Production-only secrets and persisted data
-secrets/
-.env
-.env.*
-!.env.example
-data/private/
-
-# Secrets and production configuration
-secrets/
-.env
-.env.*
-*.pem
-*.key
-
-# Private persistent/runtime data
-data/private/
-data/scanner/
-
-# Local/generated files
-node_modules/
-dist/
-build/
-coverage/
-.vite/
-docker-compose.override.yml
-compose.override.yml
