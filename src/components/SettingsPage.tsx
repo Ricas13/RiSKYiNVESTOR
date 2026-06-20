@@ -20,10 +20,13 @@ import type {
   DataStatusReport,
   NotificationPublicState,
   NotificationSettings,
+  StrategyConfiguration as StrategyConfigurationValue,
 } from "../types";
 import { DataPortability } from "./DataPortability";
 import { DiscordDestinations } from "./DiscordDestinations";
 import { NotificationHistory } from "./SignalEvents";
+import { StrategyConfiguration } from "./StrategyConfiguration";
+import { StrategyNotificationPolicies } from "./StrategyNotificationPolicies";
 import { Badge, SectionHeader } from "./ui";
 
 type Mutate = (
@@ -40,6 +43,7 @@ interface NotificationResult {
 
 export function SettingsPage({
   notifications,
+  strategyConfiguration,
   session,
   dataStatus,
   mutate,
@@ -47,6 +51,7 @@ export function SettingsPage({
   request,
 }: {
   notifications: NotificationPublicState;
+  strategyConfiguration: StrategyConfigurationValue;
   session: AuthSession;
   dataStatus: DataStatusReport;
   mutate: Mutate;
@@ -114,6 +119,12 @@ export function SettingsPage({
         request={request}
       />
 
+      <StrategyConfiguration
+        configuration={strategyConfiguration}
+        canManage={session.role === "owner" || session.role === "admin"}
+        mutate={mutate}
+      />
+
       <SectionHeader
         eyebrow="Notifications"
         title="Server-side delivery controls"
@@ -128,15 +139,21 @@ export function SettingsPage({
         mutate={mutate}
       />
 
+      <StrategyNotificationPolicies
+        value={settings.strategyPolicies}
+        destinations={notifications.providers.discord.destinations}
+        onChange={(strategyPolicies) => set("strategyPolicies", strategyPolicies)}
+      />
+
       <div className="settings-grid">
         <section className="settings-card settings-card--muted">
           <div className="settings-card__heading">
             <MessageCircle size={20} />
             <div>
-              <h2>WhatsApp</h2>
-              <p>Provider architecture is present; delivery is not implemented.</p>
+              <h2>WhatsApp not connected</h2>
+              <p>No WhatsApp provider or delivery integration is present.</p>
             </div>
-            <Badge tone="blue">STUB</Badge>
+            <Badge tone="blue">DISABLED</Badge>
           </div>
           <Toggle
             label="WhatsApp notifications"
@@ -145,7 +162,7 @@ export function SettingsPage({
             onChange={() => undefined}
           />
           <p className="settings-note">
-            No WhatsApp credentials are required or accepted yet.
+            No WhatsApp credentials are accepted and no API calls are made.
           </p>
         </section>
       </div>
