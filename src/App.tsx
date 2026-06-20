@@ -61,6 +61,7 @@ function App() {
     logout,
     mutate,
     download,
+    request,
   } = useDashboardData();
   const [page, setPage] = useState<ControlPage>(pageFromHash);
 
@@ -104,6 +105,7 @@ function App() {
       window.history.replaceState({}, "", "/login");
     },
     scannerStatus,
+    dataStatus: data?.dataStatus,
   };
 
   if (error) {
@@ -131,6 +133,7 @@ function App() {
           session={session}
           mutate={mutate}
           download={download}
+          request={request}
         />
       </div>
     </DashboardLayout>

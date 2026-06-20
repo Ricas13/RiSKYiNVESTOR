@@ -1,16 +1,23 @@
 import {
+  AlertTriangle,
   BellRing,
   CheckCircle2,
   Clock3,
+  DatabaseBackup,
+  Eye,
   KeyRound,
   MessageCircle,
   Save,
   Send,
   ShieldCheck,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
   AuthSession,
+  DataCleanupPreview,
+  DataClassification,
+  DataStatusReport,
   NotificationPublicState,
   NotificationSettings,
 } from "../types";
@@ -34,13 +41,17 @@ interface NotificationResult {
 export function SettingsPage({
   notifications,
   session,
+  dataStatus,
   mutate,
   download,
+  request,
 }: {
   notifications: NotificationPublicState;
   session: AuthSession;
+  dataStatus: DataStatusReport;
   mutate: Mutate;
   download: (path: string, filename: string) => Promise<void>;
+  request: <T>(path: string) => Promise<T>;
 }) {
   const [settings, setSettings] = useState<NotificationSettings>(
     notifications.settings,
@@ -86,6 +97,14 @@ export function SettingsPage({
 
   return (
     <div className="control-page-stack">
+      <DataStatusOnboarding
+        report={dataStatus}
+        session={session}
+        mutate={mutate}
+        download={download}
+        request={request}
+      />
+
       <SectionHeader
         eyebrow="Notifications"
         title="Server-side delivery controls"
@@ -510,6 +529,210 @@ export function SettingsPage({
       />
       <DataPortability download={download} mutate={mutate} />
     </div>
+  );
+}
+
+function DataStatusOnboarding({
+  report,
+  session,
+  mutate,
+  download,
+  request,
+}: {
+  report: DataStatusReport;
+  session: AuthSession;
+  mutate: Mutate;
+  download: (path: string, filename: string) => Promise<void>;
+  request: <T>(path: string) => Promise<T>;
+}) {
+  const [preview, setPreview] = useState<DataCleanupPreview | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const currentReport = preview?.report ?? report;
+  const canClean = session.role === "owner" || session.role === "admin";
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setMessage("");
+    try {
+      await action();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Operation failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function tone(value: DataClassification) {
+    if (value === "Demo" || value === "Mixed") return "amber" as const;
+    if (value === "Live") return "green" as const;
+    if (value === "Unknown — requires review") return "red" as const;
+    return "blue" as const;
+  }
+
+  return (
+    <section className="data-onboarding">
+      <div className="data-onboarding__heading">
+        <div>
+          <span>Data safety</span>
+          <h1>Data status and onboarding</h1>
+          <p>
+            Demo markers are classified conservatively. Unmarked historical
+            content is preserved for review, never silently deleted.
+          </p>
+        </div>
+        <Badge tone={currentReport.hasDemoData ? "amber" : "green"}>
+          {currentReport.hasDemoData ? "DEMO PRESENT" : "NO DEMO DETECTED"}
+        </Badge>
+      </div>
+
+      <div className="data-status-grid">
+        {currentReport.areas.map((area) => (
+          <article className="data-status-card" key={area.id}>
+            <div>
+              <h3>{area.label}</h3>
+              <Badge tone={tone(area.classification)}>
+                {area.classification}
+              </Badge>
+            </div>
+            <strong>{area.recordCount} records</strong>
+            <p>{area.explanation}</p>
+            <small>
+              Demo {area.demoCount} · Live {area.liveCount} · Review{" "}
+              {area.unknownCount}
+            </small>
+          </article>
+        ))}
+      </div>
+
+      <div className="cleanup-workflow">
+        <div className="cleanup-workflow__intro">
+          <AlertTriangle size={22} />
+          <div>
+            <h2>Safe demo-data cleanup</h2>
+            <p>
+              Only explicit demo markers and exact fingerprints of shipped demo
+              fixtures are removed. Genuine and unknown records remain intact.
+            </p>
+          </div>
+        </div>
+
+        {!canClean ? (
+          <p className="settings-note">
+            Owner or admin access is required to preview backups or remove demo
+            data.
+          </p>
+        ) : (
+          <div className="cleanup-steps">
+            <article>
+              <span>1</span>
+              <div>
+                <h3>Preview removal</h3>
+                <p>Validate every affected private JSON file before any write.</p>
+              </div>
+              <button
+                className="button button--secondary"
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    const result = await request<DataCleanupPreview>(
+                      "/data-cleanup/preview",
+                    );
+                    setPreview(result);
+                    setMessage(
+                      `${result.report.totals.demo} demo records are eligible for cleanup.`,
+                    );
+                  })
+                }
+              >
+                <Eye size={15} /> Preview
+              </button>
+            </article>
+
+            <article>
+              <span>2</span>
+              <div>
+                <h3>Download required backup</h3>
+                <p>
+                  The server accepts cleanup only for 30 minutes after this
+                  pre-cleanup backup is generated.
+                </p>
+              </div>
+              <button
+                className="button button--secondary"
+                disabled={busy || !preview}
+                onClick={() =>
+                  run(async () => {
+                    await download(
+                      "/data-cleanup/backup",
+                      "risky-investor-pre-cleanup-backup.json",
+                    );
+                    setPreview((current) =>
+                      current
+                        ? { ...current, backupDownloaded: true }
+                        : current,
+                    );
+                    setMessage("Required backup downloaded.");
+                  })
+                }
+              >
+                <DatabaseBackup size={15} /> Download backup
+              </button>
+            </article>
+
+            <article className="cleanup-confirmation">
+              <span>3</span>
+              <div>
+                <h3>Confirm exact phrase</h3>
+                <p>
+                  Type <code>REMOVE DEMO DATA</code>. Cleanup is audited and is
+                  never run automatically.
+                </p>
+                <input
+                  value={confirmation}
+                  onChange={(event) => setConfirmation(event.target.value)}
+                  placeholder="REMOVE DEMO DATA"
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                className="button button--danger"
+                disabled={
+                  busy ||
+                  !preview?.backupDownloaded ||
+                  confirmation !== "REMOVE DEMO DATA" ||
+                  !currentReport.hasDemoData
+                }
+                onClick={() =>
+                  run(async () => {
+                    const result = (await mutate("/data-cleanup", "POST", {
+                      confirmation,
+                    })) as {
+                      totalRemoved: number;
+                      report: DataStatusReport;
+                    };
+                    setPreview({
+                      report: result.report,
+                      confirmationText: "REMOVE DEMO DATA",
+                      backupDownloaded: false,
+                      backupReceiptExpiresMinutes: 30,
+                    });
+                    setConfirmation("");
+                    setMessage(
+                      `${result.totalRemoved} demo records removed. Unknown and live records were preserved.`,
+                    );
+                  })
+                }
+              >
+                <Trash2 size={15} /> Remove demo data
+              </button>
+            </article>
+          </div>
+        )}
+        {message && <div className="form-message">{message}</div>}
+      </div>
+    </section>
   );
 }
 

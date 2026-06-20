@@ -104,4 +104,50 @@ export class JsonStore {
       await rm(temporary, { force: true }).catch(() => undefined);
     }
   }
+
+  async writeBatch(entries: Array<{ relativePath: string; value: unknown }>) {
+    const staged = await Promise.all(
+      entries.map(async ({ relativePath, value }) => {
+        const target = this.resolve(relativePath);
+        const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        return {
+          relativePath,
+          target,
+          temporary,
+          original: await readFile(target, "utf8"),
+        };
+      }),
+    );
+    const committed: typeof staged = [];
+
+    try {
+      for (const entry of staged) {
+        await rename(entry.temporary, entry.target);
+        committed.push(entry);
+      }
+    } catch (error) {
+      for (const entry of committed.reverse()) {
+        const rollback = `${entry.target}.${process.pid}.${randomUUID()}.rollback`;
+        await writeFile(rollback, entry.original, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        await rename(rollback, entry.target).catch(async () => {
+          await rm(rollback, { force: true }).catch(() => undefined);
+        });
+      }
+      throw error;
+    } finally {
+      await Promise.all(
+        staged.map((entry) =>
+          rm(entry.temporary, { force: true }).catch(() => undefined),
+        ),
+      );
+    }
+  }
 }

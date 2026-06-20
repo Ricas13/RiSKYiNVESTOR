@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import type { DataStatusReport } from "../types";
 import type { ControlPage } from "./TradingControlPages";
 
 const navigation: Array<{
@@ -41,12 +42,14 @@ export function DashboardLayout({
   username,
   activePage,
   onLogout,
+  dataStatus,
 }: {
   children: ReactNode;
   scannerStatus?: string;
   username: string;
   activePage: ControlPage;
   onLogout: () => Promise<void>;
+  dataStatus?: DataStatusReport;
 }) {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const saved = localStorage.getItem("ri-theme");
@@ -164,6 +167,19 @@ export function DashboardLayout({
             </button>
           </div>
         </header>
+        {dataStatus?.hasDemoData && (
+          <div className="demo-data-warning" role="alert">
+            <FileWarning size={20} />
+            <div>
+              <strong>Demo data present — not live portfolio or scanner data</strong>
+              <p>
+                Displayed historical trades, P/L, portfolio values, and backtests
+                may be examples. Scanner status is shown separately above.
+              </p>
+            </div>
+            <a href="#/settings">Review and clean up</a>
+          </div>
+        )}
         <main>{children}</main>
         <footer className="site-footer">
           <p>Risky Investor · Private trading control</p>
