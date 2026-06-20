@@ -38,8 +38,8 @@ ENV NODE_ENV=production \
 
 RUN addgroup -S -g 10001 riskyinvestor \
     && adduser -S -D -H -u 10001 -G riskyinvestor riskyinvestor \
-    && mkdir -p /app/data/private \
-    && chown -R riskyinvestor:riskyinvestor /app/data
+    && mkdir -p /app/data/private /app/scanner/config /app/scanner/output \
+    && chown -R riskyinvestor:riskyinvestor /app/data /app/scanner
 
 WORKDIR /app
 COPY --from=production-dependencies --chown=riskyinvestor:riskyinvestor /app/node_modules ./node_modules
