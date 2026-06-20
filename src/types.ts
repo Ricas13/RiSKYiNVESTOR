@@ -215,6 +215,46 @@ export interface DashboardData {
   dailyPL: DailyPLReport;
   latestPortfolioSnapshot: DailyPortfolioSnapshot | null;
   scannerImport: ScannerImportState;
+  dataStatus: DataStatusReport;
+}
+
+export type DataClassification =
+  | "Demo"
+  | "Mixed"
+  | "Live"
+  | "Empty"
+  | "Unknown — requires review";
+
+export interface DataAreaStatus {
+  id: string;
+  label: string;
+  classification: DataClassification;
+  recordCount: number;
+  demoCount: number;
+  liveCount: number;
+  unknownCount: number;
+  explanation: string;
+  datasets: string[];
+}
+
+export interface DataStatusReport {
+  generatedAt: string;
+  hasDemoData: boolean;
+  warning: string | null;
+  areas: DataAreaStatus[];
+  totals: {
+    records: number;
+    demo: number;
+    live: number;
+    unknown: number;
+  };
+}
+
+export interface DataCleanupPreview {
+  report: DataStatusReport;
+  confirmationText: "REMOVE DEMO DATA";
+  backupDownloaded: boolean;
+  backupReceiptExpiresMinutes: number;
 }
 
 export interface SignalEvent {

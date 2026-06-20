@@ -54,12 +54,14 @@ export function TradingControlPage({
   session,
   mutate,
   download,
+  request,
 }: {
   page: ControlPage;
   data: DashboardData;
   session: AuthSession;
   mutate: Mutate;
   download: (path: string, filename: string) => Promise<void>;
+  request: <T>(path: string) => Promise<T>;
 }) {
   if (page === "signals") {
     return <SignalsPage data={data} mutate={mutate} />;
@@ -78,8 +80,10 @@ export function TradingControlPage({
       <SettingsPage
         notifications={data.notifications}
         session={session}
+        dataStatus={data.dataStatus}
         mutate={mutate}
         download={download}
+        request={request}
       />
     );
   }
@@ -92,6 +96,12 @@ function ControlDashboard({ data }: { data: DashboardData }) {
   );
   const latest = snapshots.at(-1);
   const scannerSnapshot = data.latestPortfolioSnapshot;
+  const hasManualPortfolio = Boolean(latest);
+  const hasModelPerformance =
+    data.performance.closedTrades > 0 ||
+    data.performance.realisedSeries.length > 0 ||
+    data.openTrades.length > 0 ||
+    data.closedTrades.trades.length > 0;
   const examplePortfolio =
     !scannerSnapshot && data.wealthSnapshots.isExample;
   const scannerValue = (
@@ -110,6 +120,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
         scannerSnapshot?.actualPortfolioValue ?? null,
         latest?.totalPortfolioValue ?? 0,
       ),
+      emptyValue: "No live portfolio data",
       detail: scannerSnapshot
         ? scannerSnapshot.actualPortfolioValue === null
           ? "Scanner placeholder · actual value unavailable"
@@ -126,6 +137,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
         scannerSnapshot?.modelPortfolioValue ?? null,
         data.performance.fixedStakeEquivalent,
       ),
+      emptyValue: "No model data",
       detail: scannerSnapshot
         ? scannerSnapshot.modelPortfolioValue === null
           ? "Scanner placeholder · model value unavailable"
@@ -141,6 +153,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
           ? "Unavailable"
           : formatMoney(scannerSnapshot.actualDailyPnl)
         : formatMoney(data.dailyPL.actualDailyPL),
+      emptyValue: "No calculation",
       detail: scannerSnapshot
         ? scannerSnapshot.actualDailyPnl === null
           ? "Scanner placeholder · daily P/L unavailable"
@@ -156,6 +169,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
       value: scannerSnapshot
         ? "Unavailable"
         : formatMoney(data.dailyPL.actualTotalPL),
+      emptyValue: "No calculation",
       detail: scannerSnapshot
         ? "Not supplied by scanner snapshot"
         : examplePortfolio
@@ -171,6 +185,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
           ? "Unavailable"
           : `${formatNumber(scannerSnapshot.currentDrawdownPercent)}%`
         : `${formatNumber(data.dailyPL.drawdownPercent)}%`,
+      emptyValue: "No calculation",
       detail: scannerSnapshot
         ? scannerSnapshot.currentDrawdownPercent === null
           ? "Scanner placeholder · drawdown unavailable"
@@ -189,6 +204,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
           ? "Unavailable"
           : `${formatMoney(scannerSnapshot.cashValue)} / ${formatMoney(scannerSnapshot.investedValue)}`
         : `${formatMoney(latest?.cashBalance ?? 0)} / ${formatMoney(latest?.investedValue ?? 0)}`,
+      emptyValue: "No allocation data",
       detail:
         scannerSnapshot
           ? scannerSnapshot.cashValue === null ||
@@ -215,14 +231,23 @@ function ControlDashboard({ data }: { data: DashboardData }) {
       <TodayActionPanel events={todayEvents} scanner={data.scannerImport} />
 
       <div className="control-metric-grid">
-        {metrics.map(({ label, value, detail, icon: Icon, tone }) => (
-          <article className={`control-metric control-metric--${tone}`} key={label}>
-            <Icon size={18} />
-            <span>{label}</span>
-            <strong>{value}</strong>
-            <p>{detail}</p>
-          </article>
-        ))}
+        {metrics.map(({ label, value, emptyValue, detail, icon: Icon, tone }) => {
+          const hasData =
+            label === "Model portfolio"
+              ? Boolean(scannerSnapshot) || hasModelPerformance
+              : Boolean(scannerSnapshot) || hasManualPortfolio;
+          return (
+            <article
+              className={`control-metric control-metric--${tone}`}
+              key={label}
+            >
+              <Icon size={18} />
+              <span>{label}</span>
+              <strong>{hasData ? value : emptyValue}</strong>
+              <p>{hasData ? detail : "No live portfolio data recorded."}</p>
+            </article>
+          );
+        })}
       </div>
 
       <section className="control-dashboard-grid">
@@ -338,6 +363,10 @@ function SignalsPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) 
 }
 
 function PortfolioPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) {
+  const hasPortfolioData =
+    data.manualTrades.trades.length > 0 ||
+    data.wealthSnapshots.snapshots.length > 0 ||
+    data.cashFlows.cashFlows.length > 0;
   return (
     <div className="control-page-stack">
       <PageHeading
@@ -345,11 +374,22 @@ function PortfolioPage({ data, mutate }: { data: DashboardData; mutate: Mutate }
         title="Actual capital and risk"
         copy="Manual positions, wealth snapshots, cash flows, concentration and drawdown."
       />
-      <ActualSummaryCards
-        trades={data.manualTrades.trades}
-        snapshots={data.wealthSnapshots.snapshots}
-        cashFlows={data.cashFlows.cashFlows}
-      />
+      {!hasPortfolioData && (
+        <div className="truthful-empty-state">
+          <Landmark size={24} />
+          <div>
+            <h2>No live portfolio data recorded</h2>
+            <p>Add a genuine snapshot, cash flow, or manual trade to begin.</p>
+          </div>
+        </div>
+      )}
+      {hasPortfolioData && (
+        <ActualSummaryCards
+          trades={data.manualTrades.trades}
+          snapshots={data.wealthSnapshots.snapshots}
+          cashFlows={data.cashFlows.cashFlows}
+        />
+      )}
       <WealthDashboard
         snapshots={data.wealthSnapshots.snapshots}
         cashFlows={data.cashFlows.cashFlows}
@@ -359,22 +399,26 @@ function PortfolioPage({ data, mutate }: { data: DashboardData; mutate: Mutate }
         }
         mutate={mutate}
       />
-      <SectionHeader
-        eyebrow="Exposure"
-        title="Risk concentration"
-        copy="Current exposure by ticker, strategy, tier, asset class and leverage."
-      />
-      <RiskExposureDashboard
-        trades={data.manualTrades.trades}
-        snapshots={data.wealthSnapshots.snapshots}
-        settings={data.settings}
-      />
-      <SectionHeader
-        eyebrow="Drawdown"
-        title="Peak-to-current pain"
-        copy="Current and worst recorded drawdown with recovery requirements."
-      />
-      <DrawdownPainTracker snapshots={data.wealthSnapshots.snapshots} />
+      {hasPortfolioData && (
+        <>
+          <SectionHeader
+            eyebrow="Exposure"
+            title="Risk concentration"
+            copy="Current exposure by ticker, strategy, tier, asset class and leverage."
+          />
+          <RiskExposureDashboard
+            trades={data.manualTrades.trades}
+            snapshots={data.wealthSnapshots.snapshots}
+            settings={data.settings}
+          />
+          <SectionHeader
+            eyebrow="Drawdown"
+            title="Peak-to-current pain"
+            copy="Current and worst recorded drawdown with recovery requirements."
+          />
+          <DrawdownPainTracker snapshots={data.wealthSnapshots.snapshots} />
+        </>
+      )}
     </div>
   );
 }
@@ -383,6 +427,12 @@ function PerformancePage({ data }: { data: DashboardData }) {
   const latest = [...data.wealthSnapshots.snapshots].sort((a, b) =>
     b.date.localeCompare(a.date),
   )[0];
+  const hasPerformance =
+    data.performance.closedTrades > 0 ||
+    data.performance.realisedSeries.length > 0 ||
+    data.openTrades.length > 0 ||
+    data.closedTrades.trades.length > 0 ||
+    data.config.backtests.baseline.startingCapital > 0;
   return (
     <div className="control-page-stack">
       <PageHeading
@@ -390,24 +440,37 @@ function PerformancePage({ data }: { data: DashboardData }) {
         title="Model analytics and research"
         copy="Detailed model positions, long performance history, charts, scenarios and backtests."
       />
-      <PerformanceCards performance={data.performance} />
-      <PerformanceCharts performance={data.performance} />
-      <OpenPositionsTable trades={data.openTrades} />
-      <ClosedTradesTable trades={data.closedTrades.trades} />
-      <SectionHeader
-        eyebrow="Projection"
-        title="Scenario simulator"
-        copy="Assumption-based future paths; not forecasts or guarantees."
-      />
-      <ScenarioSimulator
-        defaultValue={latest?.totalPortfolioValue ?? 10000}
-      />
-      <SectionHeader
-        eyebrow="Research"
-        title="Backtest archive"
-        copy="Historical model research kept away from the decision-focused dashboard."
-      />
-      <BacktestResults config={data.config} />
+      {!hasPerformance ? (
+        <div className="truthful-empty-state">
+          <Activity size={24} />
+          <div>
+            <h2>No model performance data imported</h2>
+            <p>
+              Connect a canonical scanner export before model P/L, positions,
+              charts, scenarios, or backtests are shown.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <>
+          <PerformanceCards performance={data.performance} />
+          <PerformanceCharts performance={data.performance} />
+          <OpenPositionsTable trades={data.openTrades} />
+          <ClosedTradesTable trades={data.closedTrades.trades} />
+          <SectionHeader
+            eyebrow="Projection"
+            title="Scenario simulator"
+            copy="Assumption-based future paths; not forecasts or guarantees."
+          />
+          <ScenarioSimulator defaultValue={latest?.totalPortfolioValue ?? 10000} />
+          <SectionHeader
+            eyebrow="Research"
+            title="Backtest archive"
+            copy="Historical model research kept away from the decision-focused dashboard."
+          />
+          <BacktestResults config={data.config} />
+        </>
+      )}
     </div>
   );
 }
@@ -437,6 +500,8 @@ function TradeJournalPage({
 }
 
 function StrategiesPage({ data }: { data: DashboardData }) {
+  const hasStrategies =
+    data.strategies.strategies.length > 0 || data.watchlist.length > 0;
   return (
     <div className="control-page-stack">
       <PageHeading
@@ -444,25 +509,43 @@ function StrategiesPage({ data }: { data: DashboardData }) {
         title="Rules, registry and current state"
         copy="Strategy definitions remain separate from user trades and canonical event history."
       />
-      <div className="strategy-status-grid">
-        {data.strategies.strategies.map((strategy) => (
-          <article className="strategy-status-card" key={strategy.id}>
-            <div>
-              <Badge tone={strategy.status === "active" ? "green" : "amber"}>
-                {strategy.status}
-              </Badge>
-              <span>{strategy.timeframe}</span>
-            </div>
-            <h3>{strategy.name}</h3>
-            <p>{strategy.description}</p>
-            <strong>Historical quality {strategy.historicalQuality}/100</strong>
-          </article>
-        ))}
-      </div>
-      <SummaryCards summary={data.summary} />
-      <WatchlistTable items={data.watchlist} />
-      <StrategyRules config={data.config} />
-      <ConfigViewer config={data.config} />
+      {!hasStrategies && (
+        <div className="truthful-empty-state">
+          <CircleDollarSign size={24} />
+          <div>
+            <h2>No strategy or watchlist data configured</h2>
+            <p>
+              Awaiting scanner data and genuine strategy definitions. Historical
+              model results are not substituted.
+            </p>
+          </div>
+        </div>
+      )}
+      {hasStrategies && (
+        <div className="strategy-status-grid">
+          {data.strategies.strategies.map((strategy) => (
+            <article className="strategy-status-card" key={strategy.id}>
+              <div>
+                <Badge tone={strategy.status === "active" ? "green" : "amber"}>
+                  {strategy.status}
+                </Badge>
+                <span>{strategy.timeframe}</span>
+              </div>
+              <h3>{strategy.name}</h3>
+              <p>{strategy.description}</p>
+              <strong>Historical quality {strategy.historicalQuality}/100</strong>
+            </article>
+          ))}
+        </div>
+      )}
+      {hasStrategies && (
+        <>
+          <SummaryCards summary={data.summary} />
+          <WatchlistTable items={data.watchlist} />
+          <StrategyRules config={data.config} />
+          <ConfigViewer config={data.config} />
+        </>
+      )}
     </div>
   );
 }

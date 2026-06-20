@@ -91,6 +91,8 @@ export function WealthDashboard({
     () => buildWealthAnalytics(snapshots, cashFlows, trades),
     [snapshots, cashFlows, trades],
   );
+  const hasPortfolioData =
+    snapshots.length > 0 || cashFlows.length > 0 || trades.length > 0;
 
   async function submitSnapshot(event: FormEvent) {
     event.preventDefault();
@@ -180,7 +182,7 @@ export function WealthDashboard({
         </div>
       )}
 
-      <div className="wealth-card-grid">
+      {hasPortfolioData && <div className="wealth-card-grid">
         {analytics.cards.map(({ label, value, detail, tone, icon: Icon }) => (
           <article className={`wealth-card wealth-card--${tone}`} key={label}>
             <div>
@@ -191,9 +193,9 @@ export function WealthDashboard({
             <p>{detail}</p>
           </article>
         ))}
-      </div>
+      </div>}
 
-      <div className="wealth-chart-grid">
+      {hasPortfolioData && <div className="wealth-chart-grid">
         <ChartCard title="Portfolio value over time" wide>
           <ResponsiveContainer
             width="100%"
@@ -305,7 +307,7 @@ export function WealthDashboard({
         <ChartCard title="Open allocation by strategy">
           <AllocationDonut data={analytics.strategyAllocation} />
         </ChartCard>
-      </div>
+      </div>}
 
       <div className="wealth-input-grid">
         <form className="panel compact-form" onSubmit={submitSnapshot}>

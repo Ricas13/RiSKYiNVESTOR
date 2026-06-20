@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { scryptSync } from "node:crypto";
 import { once } from "node:events";
 import {
-  copyFile,
-  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -15,52 +13,12 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { seedDemoRuntimeData } from "./fixtures/runtime-fixtures.mjs";
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const exampleRoot = path.join(projectRoot, "data", "private");
-
-const dashboardFixtures = [
-  ["manual_trades.example.json", "manual_trades.json"],
-  ["open_positions.example.json", "open_positions.json"],
-  ["closed_trades.example.json", "closed_trades.json"],
-  ["wealth_snapshots.example.json", "wealth_snapshots.json"],
-  ["cash_flows.example.json", "cash_flows.json"],
-  ["account.example.json", "account.json"],
-  ["strategies.example.json", "strategies.json"],
-  ["settings.example.json", "settings.json"],
-  ["signal_events.example.json", "signal_events.json"],
-  [
-    "daily_portfolio_snapshots.example.json",
-    "daily_portfolio_snapshots.json",
-  ],
-  ["scanner_import_state.example.json", "scanner_import_state.json"],
-  ["notification_settings.example.json", "notification_settings.json"],
-  ["notification_deliveries.example.json", "alert_deliveries.json"],
-  ["notification_credentials.example.json", "notification_credentials.json"],
-  ["signal_decisions.example.json", "signal_decisions.json"],
-  ["alerts.example.json", "alerts.json"],
-  ["model/latest_summary.example.json", "model/latest_summary.json"],
-  ["model/watchlist_status.example.json", "model/watchlist_status.json"],
-  ["model/signals_today.example.json", "model/signals_today.json"],
-  ["model/signals_archive.example.json", "model/signals_archive.json"],
-  ["model/open_trades.example.json", "model/open_trades.json"],
-  ["model/closed_trades.example.json", "model/closed_trades.json"],
-  ["model/performance.example.json", "model/performance.json"],
-  ["model/site_config.example.json", "model/site_config.json"],
-];
-
-async function seedDashboardFixtures(privateData) {
-  await mkdir(path.join(privateData, "model"), { recursive: true });
-  await Promise.all(
-    dashboardFixtures.map(([source, target]) =>
-      copyFile(path.join(exampleRoot, source), path.join(privateData, target)),
-    ),
-  );
-}
-
 function passwordHash(password) {
   const salt = "integration-test-salt";
   const hash = scryptSync(password, salt, 64, {
@@ -136,7 +94,10 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
   const usernameFile = path.join(privateData, "test-username");
   const passwordHashFile = path.join(privateData, "test-password-hash");
   const sessionSecretFile = path.join(privateData, "test-session-secret");
-  await seedDashboardFixtures(privateData);
+  await seedDemoRuntimeData(privateData, {
+    username,
+    role: "owner",
+  });
   await Promise.all([
     writeFile(usernameFile, username, "utf8"),
     writeFile(passwordHashFile, passwordHash(password), "utf8"),

@@ -18,6 +18,10 @@ import {
   verifyPassword,
 } from "./auth.js";
 import {
+  buildDataStatusReport,
+  cleanupDemoData,
+} from "./dataStatus.js";
+import {
   NotificationDispatcher,
   NotificationScheduler,
   type DailySummaryContext,
@@ -395,8 +399,8 @@ function requireOwner(
   const result = response.locals.session as
     | ReturnType<typeof readSession>
     | undefined;
-  if (result?.session.role !== "owner") {
-    response.status(403).json({ error: "Owner access is required." });
+  if (!result || !["owner", "admin"].includes(result.session.role)) {
+    response.status(403).json({ error: "Owner or admin access is required." });
     return;
   }
   next();
@@ -565,6 +569,16 @@ const backupPaths = {
   signalDecisions: "signal_decisions.json",
   alerts: "alerts.json",
   signalArchive: "model/signals_archive.json",
+  modelSummary: "model/latest_summary.json",
+  watchlistStatus: "model/watchlist_status.json",
+  signalsToday: "model/signals_today.json",
+  modelOpenTrades: "model/open_trades.json",
+  modelClosedTrades: "model/closed_trades.json",
+  modelPerformance: "model/performance.json",
+  siteConfig: "model/site_config.json",
+  openPositions: "open_positions.json",
+  closedTrades: "closed_trades.json",
+  auditLog: "audit_log.json",
 } as const;
 
 const requiredBackupKeys = [
@@ -702,6 +716,7 @@ protectedApi.get("/dashboard", async (_request, response) => {
     notifications,
     dailyPL,
     latestPortfolioSnapshot,
+    dataStatus,
   ] = await Promise.all([
     store.read("model/latest_summary.json"),
     store.read("model/watchlist_status.json"),
@@ -723,6 +738,10 @@ protectedApi.get("/dashboard", async (_request, response) => {
     notificationDispatcher.publicState(),
     buildDailyPLReport(),
     dailyPortfolioSnapshotRepository.latest(),
+    buildDataStatusReport(store, {
+      username,
+      role: configuredRole,
+    }),
   ]);
   response.json({
     summary,
@@ -748,8 +767,103 @@ protectedApi.get("/dashboard", async (_request, response) => {
     dailyPL,
     latestPortfolioSnapshot,
     scannerImport: scannerImportService.toPublicState(scannerImport),
+    dataStatus,
   });
 });
+
+const cleanupBackupReceipts = new Map<string, number>();
+const cleanupPreviewReceipts = new Map<string, number>();
+const cleanupBackupReceiptTtl = 30 * 60 * 1000;
+
+function sessionToken(response: Response) {
+  const result = response.locals.session as
+    | ReturnType<typeof readSession>
+    | undefined;
+  return result?.token ?? null;
+}
+
+protectedApi.get(
+  "/data-cleanup/preview",
+  requireOwner,
+  safeMutation(async (_request, response) => {
+    const token = sessionToken(response);
+    if (!token) throw new Error("Authentication required.");
+    cleanupPreviewReceipts.set(token, Date.now());
+    const receipt = token ? cleanupBackupReceipts.get(token) : undefined;
+    response.json({
+      report: await buildDataStatusReport(store, {
+        username,
+        role: configuredRole,
+      }),
+      confirmationText: "REMOVE DEMO DATA",
+      backupDownloaded:
+        receipt !== undefined && Date.now() - receipt <= cleanupBackupReceiptTtl,
+      backupReceiptExpiresMinutes: 30,
+    });
+  }),
+);
+
+protectedApi.get(
+  "/data-cleanup/backup",
+  requireOwner,
+  safeMutation(async (_request, response) => {
+    const token = sessionToken(response);
+    if (!token) throw new Error("Authentication required.");
+    if (!cleanupPreviewReceipts.has(token)) {
+      throw new Error("Preview the demo-data cleanup before downloading a backup.");
+    }
+    const backup = await readBackup();
+    cleanupBackupReceipts.set(token, Date.now());
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="risky-investor-pre-cleanup-backup-${new Date().toISOString().slice(0, 10)}.json"`,
+    );
+    response.json(backup);
+  }),
+);
+
+protectedApi.post(
+  "/data-cleanup",
+  requireOwner,
+  requireCsrf(sessionSecret),
+  safeMutation(async (request, response) => {
+    if (request.body?.confirmation !== "REMOVE DEMO DATA") {
+      throw new Error('Type "REMOVE DEMO DATA" exactly to continue.');
+    }
+    const token = sessionToken(response);
+    const receipt = token ? cleanupBackupReceipts.get(token) : undefined;
+    const previewReceipt = token
+      ? cleanupPreviewReceipts.get(token)
+      : undefined;
+    if (
+      previewReceipt === undefined ||
+      receipt === undefined ||
+      Date.now() - receipt > cleanupBackupReceiptTtl ||
+      receipt < previewReceipt
+    ) {
+      throw new Error(
+        "Preview the cleanup and download a fresh pre-cleanup backup before removing demo data.",
+      );
+    }
+    const result = await cleanupDemoData(store, {
+      username,
+      role: configuredRole,
+    });
+    cleanupBackupReceipts.delete(token!);
+    cleanupPreviewReceipts.delete(token!);
+    const archive = await store.read<Array<Record<string, unknown>>>(
+      "model/signals_archive.json",
+    );
+    await signalEventRepository.initialiseFromLegacy(archive);
+    response.json({
+      ...result,
+      report: await buildDataStatusReport(store, {
+        username,
+        role: configuredRole,
+      }),
+    });
+  }),
+);
 
 protectedApi.put(
   "/signal-decisions/:signalId",

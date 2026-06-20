@@ -137,6 +137,18 @@ export function useDashboardData() {
     [session],
   );
 
+  const request = useCallback(
+    async <T,>(path: string) => {
+      if (!session) throw new Error("Authentication required.");
+      const response = await fetch(`/api${path}`, {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      return responseJson<T>(response);
+    },
+    [session],
+  );
+
   return {
     data,
     session,
@@ -146,6 +158,7 @@ export function useDashboardData() {
     logout,
     mutate,
     download,
+    request,
     refresh,
   };
 }

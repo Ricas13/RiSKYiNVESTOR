@@ -82,7 +82,7 @@ export const disabledNotificationSettings: NotificationSettings = {
   retention: { maximumDeliveries: 1_000 },
 };
 
-const emptyModelSummary = {
+export const emptyModelSummary = {
   strategyName: "Awaiting scanner data",
   lastScan: "",
   greenTickers: 0,
@@ -94,7 +94,7 @@ const emptyModelSummary = {
   dataStatus: "Awaiting scanner data",
 };
 
-const emptyModelPerformance = {
+export const emptyModelPerformance = {
   realisedModelPL: 0,
   averageClosedTrade: 0,
   medianClosedTrade: 0,
@@ -110,7 +110,7 @@ const emptyModelPerformance = {
   openTradePL: [],
 };
 
-const emptySiteConfig = {
+export const emptySiteConfig = {
   site: {
     name: "Risky Investor",
     domain: "",
