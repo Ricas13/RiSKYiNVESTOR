@@ -3,6 +3,7 @@ name: ${COMPOSE_PROJECT_NAME:-risky-investor}
 services:
   app:
     image: "${RISKY_INVESTOR_IMAGE:-risky-investor-dashboard}:${RISKY_INVESTOR_TAG:-latest}"
+
     build:
       context: .
       target: runtime
@@ -10,48 +11,98 @@ services:
         APP_VERSION: ${APP_VERSION:-development}
         VCS_REF: ${VCS_REF:-unknown}
         BUILD_DATE: ${BUILD_DATE:-unknown}
+
     restart: unless-stopped
     init: true
+
     environment:
       NODE_ENV: production
       PORT: "4180"
       PRIVATE_DATA_DIR: /app/data/private
+      SCANNER_EXPORT_DIR: /app/data/scanner
+      SCANNER_STALE_MINUTES: ${SCANNER_STALE_MINUTES:-180}
       SCANNER_CONFIG_DIR: /app/scanner/config
       SCANNER_OUTPUT_DIR: /app/scanner/output
       TRUST_PROXY: "1"
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
       RISKY_INVESTOR_ROLE: ${RISKY_INVESTOR_ROLE:-owner}
+
       RISKY_INVESTOR_USERNAME_FILE: /run/secrets/risky_investor_username
       RISKY_INVESTOR_PASSWORD_HASH_FILE: /run/secrets/risky_investor_password_hash
-      SESSION_SECRET_FILE: /run/secrets/risky_investor_session_secret
+      SESSION_SECRET_FILE: /run/secrets/risky_investOR_session_secret
+
     secrets:
       - risky_investor_username
       - risky_investor_password_hash
       - risky_investor_session_secret
+
     volumes:
       - private-data:/app/data/private
+      - /opt/risky-investor-data/scanner:/app/data/scanner:ro
       - scanner_config:/app/scanner/config
       - scanner_output:/app/scanner/output:ro
+
+    networks:
+      - media_net
+
+    # Internal only. Do not publish this port publicly.
     expose:
       - "4180"
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=media_net"
+
+      # HTTP -> HTTPS redirect for this domain.
+      - "traefik.http.routers.riskyinvestor-http.rule=Host(`riskyinvestor.co.uk`)"
+      - "traefik.http.routers.riskyinvestor-http.entrypoints=web"
+      - "traefik.http.routers.riskyinvestor-http.middlewares=riskyinvestor-https"
+      - "traefik.http.routers.riskyinvestor-http.service=riskyinvestor"
+
+      - "traefik.http.middlewares.riskyinvestor-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.riskyinvestor-https.redirectscheme.permanent=true"
+
+      # Main HTTPS route.
+      - "traefik.http.routers.riskyinvestor.rule=Host(`riskyinvestor.co.uk`)"
+      - "traefik.http.routers.riskyinvestor.entrypoints=websecure"
+      - "traefik.http.routers.riskyinvestor.tls=true"
+      - "traefik.http.routers.riskyinvestor.tls.certresolver=le"
+      - "traefik.http.routers.riskyinvestor.service=riskyinvestor"
+      - "traefik.http.routers.riskyinvestor.middlewares=riskyinvestor-security"
+
+      # Docker backend for the Next/Node app.
+      - "traefik.http.services.riskyinvestor.loadbalancer.server.port=4180"
+
+      # Basic response protections at the proxy layer.
+      - "traefik.http.middlewares.riskyinvestor-security.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.riskyinvestor-security.headers.frameDeny=true"
+      - "traefik.http.middlewares.riskyinvestor-security.headers.referrerPolicy=no-referrer"
+      - "traefik.http.middlewares.riskyinvestor-security.headers.stsSeconds=31536000"
+
     healthcheck:
       test:
         - CMD
         - node
         - -e
-        - fetch('http://127.0.0.1:4180/healthz').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));
+        - "fetch('http://127.0.0.1:4180/healthz').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"
       interval: 30s
       timeout: 5s
       start_period: 15s
       retries: 3
+
     read_only: true
+
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
+
     cap_drop:
       - ALL
+
     security_opt:
       - no-new-privileges:true
+
     stop_grace_period: 20s
+
     logging:
       driver: json-file
       options:
@@ -93,10 +144,16 @@ volumes:
   scanner_output:
   scanner_state:
 
+networks:
+  media_net:
+    external: true
+
 secrets:
   risky_investor_username:
     file: ./secrets/username
+
   risky_investor_password_hash:
     file: ./secrets/password_hash
+
   risky_investor_session_secret:
     file: ./secrets/session_secret
