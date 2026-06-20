@@ -95,8 +95,8 @@ function App() {
       scanner.lastSuccessfulScanAt ?? scanner.lastGeneratedAt;
     const label = timestamp ? formatDateTime(timestamp) : "unknown time";
     return scanner.status === "stale"
-      ? `Scanner data stale Â· last success ${label}`
-      : `Scanner current Â· completed ${label}`;
+      ? `Scanner data stale · last success ${label}`
+      : `Scanner current · completed ${label}`;
   })();
 
   const layoutProps = {
