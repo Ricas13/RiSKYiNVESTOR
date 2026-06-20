@@ -59,8 +59,19 @@ export function SettingsPage({
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState("");
   const [busy, setBusy] = useState(false);
+  const dirty =
+    JSON.stringify(settings) !== JSON.stringify(notifications.settings);
 
   useEffect(() => setSettings(notifications.settings), [notifications.settings]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   function set<K extends keyof NotificationSettings>(
     key: K,
@@ -452,10 +463,14 @@ export function SettingsPage({
       </section>
 
       <div className="settings-save-bar">
+        <span className={`unsaved-indicator ${dirty ? "is-dirty" : ""}`}>
+          <i aria-hidden="true" />
+          {dirty ? "Unsaved notification changes" : "Notifications saved"}
+        </span>
         {message && <span className="form-message">{message}</span>}
         <button
           className="button button--primary"
-          disabled={busy}
+          disabled={busy || !dirty}
           onClick={() =>
             run(
               () => mutate("/notification-settings", "PUT", settings),
