@@ -1,5 +1,6 @@
 import { CircleAlert, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AppearanceSettings } from "./components/AppearanceSettings";
 import { DashboardLayout } from "./components/DashboardLayout";
 import { LoginPage } from "./components/LoginPage";
 import {
@@ -7,6 +8,7 @@ import {
   type ControlPage,
 } from "./components/TradingControlPages";
 import { useDashboardData } from "./hooks/useDashboardData";
+import { normaliseAppearance } from "./appearance";
 import { formatDateTime } from "./utils/format";
 
 const pages = new Set<ControlPage>([
@@ -106,6 +108,7 @@ function App() {
     },
     scannerStatus,
     dataStatus: data?.dataStatus,
+    appearance: normaliseAppearance(data?.settings),
   };
 
   if (error) {
@@ -127,6 +130,9 @@ function App() {
   return (
     <DashboardLayout {...layoutProps}>
       <div className="control-page">
+        {page === "settings" && (
+          <AppearanceSettings settings={data.settings} mutate={mutate} />
+        )}
         <TradingControlPage
           page={page}
           data={data}

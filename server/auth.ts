@@ -5,6 +5,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
+import { runWithDashboardAppearance } from "./dashboardAppearance.js";
 
 export const SESSION_COOKIE = "ri_session";
 
@@ -145,7 +146,10 @@ export function requireSession(secret: string) {
       return;
     }
     response.locals.session = result;
-    next();
+    runWithDashboardAppearance(
+      request.path === "/settings" ? request.body?.appearance : undefined,
+      next,
+    );
   };
 }
 

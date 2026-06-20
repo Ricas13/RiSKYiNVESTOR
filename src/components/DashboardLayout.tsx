@@ -10,14 +10,14 @@ import {
   LogOut,
   Menu,
   MessageSquareWarning,
-  Moon,
+  Palette,
   Settings2,
-  Sun,
   UserRound,
   WalletCards,
   X,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { applyAppearance, type DashboardAppearance } from "../appearance";
 import type { DataStatusReport } from "../types";
 import type { ControlPage } from "./TradingControlPages";
 
@@ -43,6 +43,7 @@ export function DashboardLayout({
   activePage,
   onLogout,
   dataStatus,
+  appearance,
 }: {
   children: ReactNode;
   scannerStatus?: string;
@@ -50,17 +51,26 @@ export function DashboardLayout({
   activePage: ControlPage;
   onLogout: () => Promise<void>;
   dataStatus?: DataStatusReport;
+  appearance: DashboardAppearance;
 }) {
-  const [theme, setTheme] = useState<"dark" | "light">(() => {
-    const saved = localStorage.getItem("ri-theme");
-    return saved === "light" ? "light" : "dark";
-  });
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("ri-theme", theme);
-  }, [theme]);
+    applyAppearance(appearance);
+  }, [appearance]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", close);
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", close);
+    };
+  }, [menuOpen]);
 
   const pageLabel =
     navigation.find((item) => item.page === activePage)?.label ?? "Dashboard";
@@ -92,6 +102,7 @@ export function DashboardLayout({
               href={`#/${page}`}
               key={page}
               onClick={() => setMenuOpen(false)}
+              aria-current={activePage === page ? "page" : undefined}
               className={
                 activePage === page ? "nav-link nav-link--active" : "nav-link"
               }
@@ -143,13 +154,15 @@ export function DashboardLayout({
             className="icon-button menu-button"
             onClick={() => setMenuOpen(true)}
             aria-label="Open navigation"
+            aria-expanded={menuOpen}
           >
             <Menu size={20} />
           </button>
           <div className="topbar-context">
-            <span className="topbar-kicker">{pageLabel}</span>
+            <span className="topbar-page-eyebrow">Private dashboard</span>
+            <strong className="topbar-kicker">{pageLabel}</strong>
             <span className="topbar-scan">
-              {scannerStatus ?? "Loading scanner state…"}
+              {scannerStatus ?? "Loading scanner stateâ€¦"}
             </span>
           </div>
           <div className="topbar-actions">
@@ -157,21 +170,23 @@ export function DashboardLayout({
               <LockKeyhole size={13} />
               Private session
             </span>
-            <button
-              className="theme-toggle"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            <a
+              className="appearance-pill"
+              href="#/settings"
+              aria-label={`Appearance: ${appearance.theme}, ${appearance.density}`}
             >
-              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-              <span>{theme === "dark" ? "Light" : "Dark"}</span>
-            </button>
+              <Palette size={16} />
+              <span>
+                {appearance.theme} / {appearance.density}
+              </span>
+            </a>
           </div>
         </header>
         {dataStatus?.hasDemoData && (
           <div className="demo-data-warning" role="alert">
             <FileWarning size={20} />
             <div>
-              <strong>Demo data present — not live portfolio or scanner data</strong>
+              <strong>Demo data present â€” not live portfolio or scanner data</strong>
               <p>
                 Displayed historical trades, P/L, portfolio values, and backtests
                 may be examples. Scanner status is shown separately above.
@@ -182,7 +197,7 @@ export function DashboardLayout({
         )}
         <main>{children}</main>
         <footer className="site-footer">
-          <p>Risky Investor · Private trading control</p>
+          <p>Risky Investor Â· Private trading control</p>
           <p>Signals and education only. No broker execution.</p>
         </footer>
       </div>
