@@ -182,12 +182,15 @@ test("appearance is private, defaults without rewriting, and persists safely", a
     });
     assert.equal(response.status, 200);
     const updated = await response.json();
-    assert.deepEqual(updated.appearance, {
-      theme: "ocean",
-      density: "compact",
-    });
     assert.equal(updated.assumedMissedStake, 1250);
     assert.equal(updated.riskLimits.maxTickerPct, 25);
+    assert.deepEqual(
+      JSON.parse(await readFile(settingsPath, "utf8")).appearance,
+      {
+        theme: "ocean",
+        density: "compact",
+      },
+    );
 
     response = await fetch(`${baseUrl}/api/dashboard`, {
       headers: { cookie },
