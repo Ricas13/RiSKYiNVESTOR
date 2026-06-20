@@ -41,6 +41,10 @@ export interface NotificationSettings {
     dailySummary: boolean;
     weeklySummary: boolean;
   };
+  strategyPolicies: {
+    "daily-supertrend": StrategyNotificationPolicy;
+    "nasdaq-sma200-3x": StrategyNotificationPolicy;
+  };
   dailySummary: {
     enabled: boolean;
     time: string;
@@ -82,6 +86,16 @@ export interface NotificationSettings {
   retention: {
     maximumDeliveries: number;
   };
+}
+
+export interface StrategyNotificationPolicy {
+  entry: string[];
+  exit: string[];
+  lowLiquidity: string[];
+  stateUpdate: string[];
+  dailySummary: string[];
+  weeklySummary: string[];
+  scannerError: string[];
 }
 
 export interface DailyPLReport {
@@ -208,6 +222,66 @@ function destinationCategoryFor(
   return null;
 }
 
+function emptyStrategyPolicy(): StrategyNotificationPolicy {
+  return {
+    entry: [],
+    exit: [],
+    lowLiquidity: [],
+    stateUpdate: [],
+    dailySummary: [],
+    weeklySummary: [],
+    scannerError: [],
+  };
+}
+
+function cleanDestinationIds(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 100),
+    ),
+  ];
+}
+
+function cleanStrategyPolicy(
+  value: Partial<StrategyNotificationPolicy> | undefined,
+): StrategyNotificationPolicy {
+  const fallback = emptyStrategyPolicy();
+  return {
+    entry: cleanDestinationIds(value?.entry ?? fallback.entry),
+    exit: cleanDestinationIds(value?.exit ?? fallback.exit),
+    lowLiquidity: cleanDestinationIds(
+      value?.lowLiquidity ?? fallback.lowLiquidity,
+    ),
+    stateUpdate: cleanDestinationIds(
+      value?.stateUpdate ?? fallback.stateUpdate,
+    ),
+    dailySummary: cleanDestinationIds(
+      value?.dailySummary ?? fallback.dailySummary,
+    ),
+    weeklySummary: cleanDestinationIds(
+      value?.weeklySummary ?? fallback.weeklySummary,
+    ),
+    scannerError: cleanDestinationIds(
+      value?.scannerError ?? fallback.scannerError,
+    ),
+  };
+}
+
+function strategyPolicyKey(event: SignalEvent): keyof StrategyNotificationPolicy {
+  if (event.signalState === "actionable_entry") return "entry";
+  if (event.signalState === "actionable_exit") return "exit";
+  if (event.signalState === "low_liquidity_warning") return "lowLiquidity";
+  if (event.signalState === "scanner_error") return "scannerError";
+  if (event.reasonCode === "strategy_daily_summary") return "dailySummary";
+  if (event.reasonCode === "strategy_weekly_summary") return "weeklySummary";
+  return "stateUpdate";
+}
+
 function money(value: number | null) {
   if (value === null) return "unavailable";
   return new Intl.NumberFormat("en-GB", {
@@ -246,6 +320,14 @@ function normaliseSettings(value: Partial<NotificationSettings>) {
       watchlistOnly: Boolean(value.signalAlerts?.watchlistOnly),
       dailySummary: value.signalAlerts?.dailySummary !== false,
       weeklySummary: Boolean(value.signalAlerts?.weeklySummary),
+    },
+    strategyPolicies: {
+      "daily-supertrend": cleanStrategyPolicy(
+        value.strategyPolicies?.["daily-supertrend"],
+      ),
+      "nasdaq-sma200-3x": cleanStrategyPolicy(
+        value.strategyPolicies?.["nasdaq-sma200-3x"],
+      ),
     },
     dailySummary: {
       enabled: Boolean(value.dailySummary?.enabled),
@@ -437,6 +519,18 @@ export class NotificationDispatcher {
         ...current.signalAlerts,
         ...value.signalAlerts,
       },
+      strategyPolicies: {
+        ...current.strategyPolicies,
+        ...value.strategyPolicies,
+        "daily-supertrend": {
+          ...current.strategyPolicies["daily-supertrend"],
+          ...value.strategyPolicies?.["daily-supertrend"],
+        },
+        "nasdaq-sma200-3x": {
+          ...current.strategyPolicies["nasdaq-sma200-3x"],
+          ...value.strategyPolicies?.["nasdaq-sma200-3x"],
+        },
+      },
       dailySummary: {
         ...current.dailySummary,
         ...value.dailySummary,
@@ -517,9 +611,31 @@ export class NotificationDispatcher {
     }
     const destinationCategory = destinationCategoryFor(event.signalState);
     if (!destinationCategory) return null;
+    const strategyPolicy =
+      event.strategyId === "daily-supertrend" ||
+      event.strategyId === "nasdaq-sma200-3x"
+        ? settings.strategyPolicies[event.strategyId]
+        : null;
+    const allowedDestinationIds = strategyPolicy
+      ? new Set(strategyPolicy[strategyPolicyKey(event)])
+      : undefined;
+    if (allowedDestinationIds && allowedDestinationIds.size === 0) {
+      return this.recordFinal({
+        notificationKey: `discord:signal:${event.eventId}:strategy-muted`,
+        eventId: event.eventId,
+        channel: "discord",
+        category: "signal",
+        status: "skipped",
+        message,
+        errorMessage:
+          "Strategy policy keeps this event in website history only.",
+        retryCount: 0,
+      });
+    }
     const targets = await this.destinations.deliveryTargets(
       destinationCategory,
       settings.migration.legacyServerDiscordAlongsideManaged,
+      allowedDestinationIds,
     );
     if (!targets.length) {
       return this.recordFinal({
