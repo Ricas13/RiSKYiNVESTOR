@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   awaitingScannerState,
   disabledNotificationSettings,
@@ -126,52 +126,70 @@ const areaDefinitions: AreaDefinition[] = [
   },
 ];
 
-const knownDemoIds: Record<string, Set<string>> = {
+// Each hash covers the canonical JSON for one complete shipped fixture record.
+// Matching IDs or any partial subset of fields never qualify for removal.
+const strictShippedFixtureFingerprints: Record<string, Set<string>> = {
+  "model/latest_summary.json": new Set([
+    "92c6fd3924d9a374852e9c367fe4ee70e94034c621f9d7b944e46d462aa8249a",
+  ]),
+  "model/performance.json": new Set([
+    "af09c9728e143975c40318ccdfc1cf5110d832ba0a7020924f7309421bb3dee9",
+  ]),
+  "model/site_config.json": new Set([
+    "e029ae13dfae5718a55bc9ad5c799162590fd0ab093ccbedec8310491d50e914",
+  ]),
   "model/signals_today.json": new Set([
-    "sig-20260617-smh",
-    "sig-20260617-silver",
-    "sig-20260617-nvda-tp",
+    "66f0cae17fbf8900d61c7d1e78a0f053d84383f28784a333afd9088ddc5104bb",
+    "929bfe88bb287a989aec9415f6421af5c9cd5ec9da6e33b08592278dab564ed5",
+    "1aca12602dd7ea2a3e2653e73fa6e79c5f7203958eca5f75cf4745f292438482",
   ]),
   "model/signals_archive.json": new Set([
-    "sig-20260115-ark",
-    "sig-20260220-meta",
-    "sig-20260210-qqq",
-    "sig-20260305-gold",
-    "sig-20260617-smh",
-    "sig-20260617-silver",
-    "sig-20260617-nvda-tp",
+    "b86292d722fd5ba529173885333a8921ded42083445d0af3f7f768f89b52a477",
+    "3713790bfa1e5eb771a96a797db9f2b6773a45d4a9943dad91b5d346e03146f6",
+    "b3d9d58ef8ebc60f684ed6c73e2d75802596cc10da16e7df4dfc4c7e0f8730c0",
+    "a9e3552887498cbdcab4fd0d01100b95065afdfc073286c20b56737d5543446b",
+    "f9a26b76c70c242039e75d1b95fdf0286dfb1f5d950a45746f51bd8dce7a8061",
+    "8da97298916db8762226e40cbb3e4cdb20a658dbc3b027be1668e6792aa0dd5e",
+    "45fe9dbb310a9eae9c5bae187dd4a57bd31c99afb097efc9b49adabb4a643ca9",
   ]),
   "model/open_trades.json": new Set([
-    "open-qqq3",
-    "open-3usl",
-    "open-3gld",
-    "open-3nvd",
-    "open-3msf",
-    "open-3ark",
+    "b30390d844a122e1f99db9bf1160a10f0a3094963c0e88e92489eb7a904f8899",
+    "f2455a23db10d6d51a84e4b78420c882ceb77e1c62e35dd12dfc8def19bdd8e3",
+    "f0b4ef22e92eda2ec8bd1934d5554c32d6ef63053e3c183ae7710d7611d9e4f4",
+    "b5a9784e22753beead9196530289017a544a77497451edbec88301eb3b5f1673",
+    "5b0a6b522a7556ae49fdee700fd2a53ac9cde1e7ea1049eab68ab69faf2b6c0e",
+    "a48193cabb05df5f2f9c2ccd26527075127483b9bec1cd3bcfb8016947f28195",
   ]),
-  "model/closed_trades.json": new Set(
-    Array.from({ length: 8 }, (_, index) => `closed-${String(index + 1).padStart(3, "0")}`),
-  ),
+  "model/closed_trades.json": new Set([
+    "66638c18cdd143d0358cc8a50fe2e538d38d3de713b8875e014e978bda6c36eb",
+    "7add9d72b13bd61be41c2f9e92c5ccddfa24580165503b13f5398519ce6e2809",
+    "0160e8d7960d410f6691dce418941d37c091a3b244d473484c14ee2e25894ebc",
+    "fbeabab33979f2a425ddb1282baffa96901dcd6b904e035daa0461fcdbc0d3cf",
+    "bbd0480adedcd57be6ed3c3a8d7a59873748b86491601b446835c1d6b0032a35",
+    "3bde7bb25df9fcb8a42341be53926a4819e37a43d6bf6b9ed50696d2643d1c1f",
+    "85b3b45baa9b150c2ccd88105c5f9fe1c8da14f559788e7d15c9e7e7a221ce74",
+    "0928f1db13aed4e83ed31d8d36cdcf21046b06fd1b2eac0b7520e81d6719cdbd",
+  ]),
   "model/watchlist_status.json": new Set([
-    "nasdaq-100",
-    "sp-500",
-    "magnificent-7",
-    "total-world",
-    "gold",
-    "silver",
-    "semiconductors",
-    "nvidia",
-    "alphabet",
-    "netflix",
-    "apple",
-    "amazon",
-    "microsoft",
-    "meta",
-    "tesla",
-    "coinbase",
-    "arm",
-    "ark-innovation",
-    "shell",
+    "277b9cb14ba967abf769b7be30a30ddd139c600ab946095e6ec2f7251f409491",
+    "7cbcbe7cd46e36622e8f9f13d561cb7ec7bf1f613126f14579d9c8ce90715861",
+    "d13eae3526a9e98e5d2712630a28ca20554a83e700092ff2b7c20ed7fe5821fa",
+    "d5c18ce7d0af62a90f2465e7e4b28bed0de53703d259e4b0e03b43edf0a2f0fa",
+    "d83a21220bd2daec317adc47b61efa87f6c15b826233a45227a4a1fb370da743",
+    "46173dcda24b0c01805ce76f6c8f393a70d43dc36d92e5445abf0ccb1d19803e",
+    "779e6d9fe72f91544e8ddc43c1f1a2a9946162c5305c6fec65e66b4016cb23d1",
+    "9e6a20fc0528be7aef6806ecbee0737c23350e58adb1742043872b02928d1ea0",
+    "4ac91b8d2b131d5934616ade085dc24a3cdb2e210883b5f700b8e79ae5b235d1",
+    "3494bf7b1ff1a73c02d89ddc78b4505292d009014faa3a394d0977c5bc12fc54",
+    "244e90325775ba8cf6a979c27abe2ccac1a7d34a9dcfda435782688ce33e8aca",
+    "0d28784b410d2cd616443f77d5ddb1914009c8989b83aa83f91ff40883574709",
+    "8d52416a5bf5396f38f3656c99835c8153350518cafbc926c05e85591a232bb4",
+    "25bfed47b651f82596ad0cf454e9150a5c6fb79b4ad58dc57d543236915f25f5",
+    "72b0d07d2b20a6c75c49a64ed137ba1f270c550d1d396036d2bd77ffd7cbda9c",
+    "a362e6802bd8d1841b3a04320b271d4d2b77e2678b5d5bde614520d4ad356006",
+    "ea4454fb02c6300329b96c091194207b66a1168e349c9015b03f921dfed541e6",
+    "8fbc5354bbc9ff9eab34c8de565c0772d38303b7b4450e1ff77ab8d3f5807fd4",
+    "cfa05675160f51e37f7f24861672914605add83df95b66661b77bee60f58dab1",
   ]),
 };
 
@@ -184,18 +202,37 @@ function asRecord(value: unknown) {
 function explicitDemoRecord(value: unknown) {
   const record = asRecord(value);
   if (!record) return false;
-  if (
+  return (
     record.isExample === true ||
     record.isDemo === true ||
     record.demo === true ||
-    record.dataStatus === "demo"
-  ) {
-    return true;
+    (typeof record.dataStatus === "string" &&
+      record.dataStatus.toLowerCase() === "demo")
+  );
+}
+
+function stableJson(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
   }
-  const id = typeof record.id === "string" ? record.id.toLowerCase() : "";
-  const notice =
-    typeof record.notice === "string" ? record.notice.toLowerCase() : "";
-  return id.startsWith("example-") || /\b(fake|demo|example)\b/.test(notice);
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(",")}}`;
+}
+
+function isStrictShippedFixtureRecord(path: string, value: unknown) {
+  const fingerprints = strictShippedFixtureFingerprints[path];
+  if (!fingerprints) return false;
+  const fingerprint = createHash("sha256")
+    .update(stableJson(value))
+    .digest("hex");
+  return fingerprints.has(fingerprint);
 }
 
 function arrayValue(value: unknown, key?: string) {
@@ -275,17 +312,9 @@ function flexibleArrayPlan(
       nextValue: empty,
     };
   }
-  const knownIds = knownDemoIds[path] ?? new Set<string>();
-  const isDemo = (value: unknown) => {
-    const record = asRecord(value);
-    const id =
-      typeof record?.id === "string"
-        ? record.id
-        : typeof record?.eventId === "string"
-          ? record.eventId
-          : "";
-    return explicitDemoRecord(value) || knownIds.has(id);
-  };
+  const isDemo = (value: unknown) =>
+    explicitDemoRecord(value) ||
+    isStrictShippedFixtureRecord(path, value);
   const demo = values.filter(isDemo);
   const retained = values.filter((value) => !isDemo(value));
   const nextValue = demo.length
@@ -305,14 +334,16 @@ function flexibleArrayPlan(
 function singletonPlan(
   path: string,
   raw: unknown,
-  isKnownDemo: (value: Record<string, unknown>) => boolean,
   emptyValue: unknown,
   unmarked: "live" | "unknown" = "unknown",
   isEmpty: (value: Record<string, unknown>) => boolean = () => false,
 ): DatasetPlan {
   const record = asRecord(raw);
   if (!record) return { path, demo: 0, live: 0, unknown: 1 };
-  if (record.isExample === true || isKnownDemo(record)) {
+  if (
+    explicitDemoRecord(record) ||
+    isStrictShippedFixtureRecord(path, record)
+  ) {
     return {
       path,
       demo: 1,
@@ -472,10 +503,6 @@ async function buildPlans(store: JsonStore, account: {
     singletonPlan(
       "model/latest_summary.json",
       data["model/latest_summary.json"],
-      (value) =>
-        value.lastScan === "2026-06-17T21:35:00Z" &&
-        value.realisedModelPL === 148.6 &&
-        value.openModelTrades === 6,
       emptyModelSummary,
       "unknown",
       (value) =>
@@ -486,10 +513,6 @@ async function buildPlans(store: JsonStore, account: {
     singletonPlan(
       "model/performance.json",
       data["model/performance.json"],
-      (value) =>
-        value.realisedModelPL === 148.6 &&
-        value.closedTrades === 24 &&
-        value.fixedStakeEquivalent === 2486,
       emptyModelPerformance,
       "unknown",
       (value) =>
@@ -520,7 +543,6 @@ async function buildPlans(store: JsonStore, account: {
     singletonPlan(
       "scanner_import_state.json",
       data["scanner_import_state.json"],
-      () => false,
       awaitingScannerState,
       "live",
       (value) =>
@@ -535,15 +557,6 @@ async function buildPlans(store: JsonStore, account: {
     singletonPlan(
       "model/site_config.json",
       data["model/site_config.json"],
-      (value) => {
-        const backtests = asRecord(value.backtests);
-        const baseline = asRecord(backtests?.baseline);
-        return (
-          baseline?.startingCapital === 20000 &&
-          baseline.finalEquity === 216897 &&
-          baseline.totalReturn === 984.48
-        );
-      },
       emptySiteConfig,
       "unknown",
       (value) => {

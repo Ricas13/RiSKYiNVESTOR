@@ -47,6 +47,7 @@ function demoTrade() {
 function archivedSignal(id, ticker) {
   return {
     id,
+    isExample: true,
     strategyName: "Baseline Adaptive SuperTrend",
     title: `${ticker} deterministic signal`,
     assetName: ticker,
@@ -242,6 +243,7 @@ export async function seedDemoRuntimeData(
     store.write("model/watchlist_status.json", [
       {
         id: "nasdaq-100",
+        isExample: true,
         assetName: "Nasdaq 100",
         entryTicker: "QQQ",
         tradeTicker: "QQQ3.L",
@@ -257,6 +259,7 @@ export async function seedDemoRuntimeData(
     store.write("model/open_trades.json", [
       {
         id: "open-qqq3",
+        isExample: true,
         ticker: "QQQ3.L",
         strategyName: "Baseline Adaptive SuperTrend",
         entryDate: "2026-02-10",
