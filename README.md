@@ -28,6 +28,7 @@ broker secrets or private financial JSON.
 ## Requirements
 
 - Node.js 20 or newer
+- Python 3.12 for the integrated scanner
 - npm, pnpm or yarn
 - HTTPS for production
 
@@ -143,8 +144,32 @@ The server uses atomic temporary-file replacement when saving JSON. The
 
 ## Canonical scanner event contract
 
-The dashboard does not calculate SuperTrend signals. It accepts explicit,
-normalised scanner facts and rejects inconsistent actionable states.
+The repository includes a self-contained Python 3.12 scanner under `scanner/`.
+It retrieves daily prices directly from the configured public HTTPS
+market-data provider, calculates the two independent virtual strategies, and
+writes `multi_strategy_v1.json` atomically. It never sends notifications,
+places broker orders, or reads dashboard secrets/private data.
+
+Run the scanner directly with:
+
+```bash
+python -m risky_investor_scanner --once
+python -m risky_investor_scanner --loop
+python -m risky_investor_scanner --rebuild-history
+```
+
+Docker Compose isolates scanner configuration, output, and durable model state
+in `scanner_config`, `scanner_output`, and `scanner_state`. The dashboard can
+write only configuration and can read only scanner output. The scanner cannot
+access the dashboard private-data volume, Discord encryption keys, or session
+secrets.
+
+See [docs/multi_strategy_v1.md](./docs/multi_strategy_v1.md) for the scanner
+output contract.
+
+The dashboard also retains its previous canonical scanner import path for
+backwards-compatible owner data. It accepts explicit, normalised scanner facts
+and rejects inconsistent actionable states.
 
 `SignalEvent` schema version 1 requires:
 
@@ -238,7 +263,7 @@ The default migration state is deliberately safe:
 - canonical dashboard Discord disabled
 - Discord notifications disabled
 - daily summaries disabled
-- WhatsApp present only as a provider stub
+- WhatsApp not connected; no provider, credentials, API calls, or delivery
 
 Canonical signal delivery is idempotent by event ID. Daily summaries are
 idempotent by local report date and timezone, use only canonical snapshot
@@ -253,27 +278,17 @@ explicit confirmation.
 See `DOCKER.md` for private webhook setup and the duplicate-safe scanner
 cutover procedure.
 
-### Python bot exports
+### Integrated virtual strategy models
 
-The Python bot can atomically replace files under `data/private/model/`.
-Preserve the property names demonstrated in the example fixtures.
+The Strategy Configuration settings area is owner/admin and CSRF protected.
+Both strategies start disabled with no assumed ticker mappings. Scanner
+positions are always labelled `Virtual model position`; they never create an
+actual trade. Actual trades remain manually entered and may optionally be
+tagged to the SuperTrend, SMA200 Regime, or discretionary sleeve.
 
-Example safe write:
-
-```python
-import json
-from pathlib import Path
-
-target = Path("/opt/risky-investor/data/private/model/latest_summary.json")
-temporary = target.with_suffix(".json.tmp")
-
-temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-json.loads(temporary.read_text(encoding="utf-8"))
-temporary.replace(target)
-```
-
-The private data directory must never be mounted as an Nginx static location.
-Only the authenticated Express API should read it.
+Strategy-specific Discord policies default to website history only. Owners can
+route each strategy/event type to one or more encrypted managed Discord
+destinations without exposing webhook URLs.
 
 ## Manual trades
 
