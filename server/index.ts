@@ -26,8 +26,12 @@ import {
   NotificationScheduler,
   type DailySummaryContext,
   type DailyPLReport,
-  type NotificationCredentials,
 } from "./notifications.js";
+import {
+  CredentialCipher,
+  DiscordDestinationManager,
+  loadCredentialEncryptionKey,
+} from "./discordDestinations.js";
 import { ScannerImportService } from "./scannerImport.js";
 import {
   AlertDeliveryRepository,
@@ -192,6 +196,10 @@ const configuredRole = ["owner", "user", "admin"].includes(
   : "owner";
 const ttlHours = Number(process.env.SESSION_TTL_HOURS ?? 12);
 const secureCookies = process.env.NODE_ENV === "production";
+const credentialEncryptionKey = loadCredentialEncryptionKey(
+  process.env,
+  secureCookies,
+);
 
 if (!username || !passwordHash || !sessionSecret || sessionSecret.length < 32) {
   throw new Error(
@@ -234,27 +242,19 @@ const signalEventRepository = new SignalEventRepository(store);
 const alertDeliveryRepository = new AlertDeliveryRepository(store);
 const dailyPortfolioSnapshotRepository =
   new DailyPortfolioSnapshotRepository(store);
+const discordDestinationManager = new DiscordDestinationManager(
+  store,
+  credentialEncryptionKey
+    ? new CredentialCipher(credentialEncryptionKey)
+    : null,
+  () =>
+    secretValue("RISKY_INVESTOR_DISCORD_WEBHOOK_URL")?.trim() ?? null,
+);
+discordDestinationManager.validateLegacyConfiguration();
 const notificationDispatcher = new NotificationDispatcher(
   store,
   alertDeliveryRepository,
-  async () => {
-    const stored =
-      (await store.readOptional<NotificationCredentials>(
-        "notification_credentials.json",
-      )) ?? {
-        version: 1,
-        discordWebhookUrl: null,
-        whatsapp: {},
-      };
-    const environmentWebhook = secretValue(
-      "RISKY_INVESTOR_DISCORD_WEBHOOK_URL",
-    )?.trim();
-    return {
-      ...stored,
-      discordWebhookUrl:
-        environmentWebhook || stored.discordWebhookUrl || null,
-    };
-  },
+  discordDestinationManager,
 );
 await signalEventRepository.initialiseFromLegacy(
   (await store.readOptional<Array<Record<string, unknown>>>(
@@ -275,16 +275,32 @@ const scannerImportService = new ScannerImportService(
 );
 
 async function buildNotificationContext(): Promise<DailySummaryContext> {
-  const [snapshot, signalEvents, scannerState] = await Promise.all([
+  const [snapshot, signalEvents, scannerState, watchlist] =
+    await Promise.all([
     dailyPortfolioSnapshotRepository.latest(),
     signalEventRepository.read(),
     scannerImportService.readState(),
+    store.read<Array<{
+      tradeTicker?: string;
+      underlyingTicker?: string;
+      entryTicker?: string;
+      currentTrend?: string;
+    }>>("model/watchlist_status.json"),
   ]);
+  const scanner = scannerImportService.toPublicState(scannerState);
   return {
     snapshot,
     latestActionableEvent:
       signalEvents.events.find((event) => event.isActionable) ?? null,
-    scanner: scannerImportService.toPublicState(scannerState),
+    scanner: {
+      ...scanner,
+      watchlist: watchlist.map((item) => ({
+        tradeTicker: item.tradeTicker,
+        underlyingTicker:
+          item.underlyingTicker ?? item.entryTicker,
+        currentTrend: item.currentTrend,
+      })),
+    },
   };
 }
 
@@ -1045,12 +1061,90 @@ protectedApi.put(
 );
 
 protectedApi.post(
+  "/discord-destinations",
+  requireOwner,
+  requireCsrf(sessionSecret),
+  safeMutation(async (request, response) => {
+    response.status(201).json(
+      await discordDestinationManager.create({
+        label: request.body?.label,
+        webhook: request.body?.webhook,
+        enabled: request.body?.enabled,
+        displayName: request.body?.displayName,
+        avatarUrl: request.body?.avatarUrl,
+      }),
+    );
+  }),
+);
+
+protectedApi.put(
+  "/discord-destinations/:destinationId",
+  requireOwner,
+  requireCsrf(sessionSecret),
+  safeMutation(async (request, response) => {
+    response.json(
+      await discordDestinationManager.update(
+        String(request.params.destinationId),
+        {
+          label: request.body?.label,
+          enabled: request.body?.enabled,
+          displayName: request.body?.displayName,
+          avatarUrl: request.body?.avatarUrl,
+        },
+      ),
+    );
+  }),
+);
+
+protectedApi.put(
+  "/discord-destinations/:destinationId/webhook",
+  requireOwner,
+  requireCsrf(sessionSecret),
+  safeMutation(async (request, response) => {
+    response.json(
+      await discordDestinationManager.replaceWebhook(
+        String(request.params.destinationId),
+        request.body?.webhook,
+      ),
+    );
+  }),
+);
+
+protectedApi.delete(
+  "/discord-destinations/:destinationId",
+  requireOwner,
+  requireCsrf(sessionSecret),
+  safeMutation(async (request, response) => {
+    response.json(
+      await discordDestinationManager.delete(
+        String(request.params.destinationId),
+      ),
+    );
+  }),
+);
+
+protectedApi.post(
+  "/discord-destinations/:destinationId/test",
+  requireOwner,
+  requireCsrf(sessionSecret),
+  safeMutation(async (request, response) => {
+    response.json(
+      await notificationDispatcher.testDiscord(
+        String(request.params.destinationId),
+        false,
+      ),
+    );
+  }),
+);
+
+protectedApi.post(
   "/notifications/test",
   requireOwner,
   requireCsrf(sessionSecret),
   safeMutation(async (request, response) => {
     response.json(
       await notificationDispatcher.testDiscord(
+        undefined,
         request.body?.dryRun === true,
       ),
     );
