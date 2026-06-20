@@ -7,6 +7,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
+import "../discordDestinations.css";
 import type { DiscordDestination } from "../types";
 import { formatDateTime } from "../utils/format";
 import { Badge } from "./ui";
