@@ -7,6 +7,19 @@ import {
   NotificationDispatcher,
   NotificationScheduler,
 } from "../dist-server/notifications.js";
+import {
+  CredentialCipher,
+  DiscordDestinationManager,
+  loadCredentialEncryptionKey,
+  parseCredentialEncryptionKey,
+} from "../dist-server/discordDestinations.js";
+import {
+  dailySummaryDiscordPayload,
+  discordColors,
+  signalDiscordPayload,
+  testDiscordPayload,
+  validateDiscordPayload,
+} from "../dist-server/discordEmbeds.js";
 import { AlertDeliveryRepository } from "../dist-server/signalEvents.js";
 import { JsonStore } from "../dist-server/store.js";
 
@@ -19,6 +32,7 @@ function settings(overrides = {}) {
     migration: {
       legacyScannerDiscordEnabled: false,
       canonicalDashboardDiscordEnabled: true,
+      legacyServerDiscordAlongsideManaged: false,
     },
     signalAlerts: {
       entry: true,
@@ -127,45 +141,70 @@ function snapshot() {
   };
 }
 
-class FakeDiscordProvider {
-  id = "discord";
-  available = true;
-  calls = 0;
+function subscriptions(overrides = {}) {
+  return {
+    entry: true,
+    exit: true,
+    lowLiquidity: true,
+    scannerError: true,
+    watchlistOnly: true,
+    dailySummary: true,
+    weeklySummary: true,
+    ...overrides,
+  };
+}
+
+function noSubscriptions(overrides = {}) {
+  return subscriptions({
+    entry: false,
+    exit: false,
+    lowLiquidity: false,
+    scannerError: false,
+    watchlistOnly: false,
+    dailySummary: false,
+    weeklySummary: false,
+    ...overrides,
+  });
+}
+
+class FakeDiscordTransport {
+  calls = [];
   failuresRemaining;
 
-  constructor(failuresRemaining = 0) {
-    this.failuresRemaining = failuresRemaining;
+  constructor(failingEndings = []) {
+    this.failuresRemaining = new Map(
+      failingEndings.map((ending) => [ending, 1]),
+    );
   }
 
-  async configured() {
-    return true;
-  }
-
-  async maskedEnding() {
-    return "1234";
-  }
-
-  async send() {
-    this.calls += 1;
-    if (this.failuresRemaining > 0) {
-      this.failuresRemaining -= 1;
+  async send(webhook, payload) {
+    this.calls.push({ webhook, payload });
+    const ending = [...this.failuresRemaining.keys()].find(
+      (candidate) =>
+        webhook.endsWith(candidate) &&
+        (this.failuresRemaining.get(candidate) ?? 0) > 0,
+    );
+    if (ending) {
+      this.failuresRemaining.set(
+        ending,
+        (this.failuresRemaining.get(ending) ?? 1) - 1,
+      );
       throw new Error(
         "Discord delivery failed token=private https://discord.com/api/webhooks/123/secret",
       );
     }
-    return { providerReference: `message-${this.calls}` };
+    return { providerReference: `message-${this.calls.length}` };
   }
 }
 
-async function fixture(provider = new FakeDiscordProvider()) {
+async function fixture(transport = new FakeDiscordTransport(), count = 1) {
   const root = await mkdtemp(path.join(os.tmpdir(), "risky-notifications-"));
   const store = new JsonStore(root);
   await Promise.all([
     store.write("notification_settings.json", settings()),
-    store.write("notification_credentials.json", {
+    store.write("discord_destinations.json", {
       version: 1,
-      discordWebhookUrl: null,
-      whatsapp: {},
+      destinations: [],
     }),
     store.write("alert_deliveries.json", {
       version: 2,
@@ -174,13 +213,45 @@ async function fixture(provider = new FakeDiscordProvider()) {
     }),
   ]);
   const deliveries = new AlertDeliveryRepository(store);
+  const manager = new DiscordDestinationManager(
+    store,
+    new CredentialCipher(
+      parseCredentialEncryptionKey(
+        "notification-test-encryption-key-that-is-at-least-32-bytes",
+      ),
+    ),
+    () => null,
+    transport,
+  );
+  const destinations = [];
+  for (let index = 0; index < count; index += 1) {
+    const created = await manager.create({
+      label: `Destination ${index + 1}`,
+      webhook: `https://discord.com/api/webhooks/${index + 1}/secret-${index + 1}`,
+      enabled: true,
+      displayName: "Risky Investor",
+    });
+    destinations.push(
+      await manager.update(created.destinationId, {
+        enabled: true,
+        subscriptions: subscriptions(),
+      }),
+    );
+  }
   const dispatcher = new NotificationDispatcher(
     store,
     deliveries,
-    undefined,
-    provider,
+    manager,
   );
-  return { root, store, deliveries, dispatcher, provider };
+  return {
+    root,
+    store,
+    deliveries,
+    dispatcher,
+    manager,
+    transport,
+    destinations,
+  };
 }
 
 test("canonical actionable signals send once and non-alert states do not send", async () => {
@@ -201,7 +272,8 @@ test("canonical actionable signals send once and non-alert states do not send", 
     assert.equal(first.status, "sent");
     assert.equal(duplicate.deliveryId, first.deliveryId);
     assert.equal(unchanged, null);
-    assert.equal(value.provider.calls, 1);
+    assert.equal(value.transport.calls.length, 1);
+    assert.equal("content" in value.transport.calls[0].payload, false);
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }
@@ -215,12 +287,14 @@ test("disabled delivery is audited and provider errors are safely redacted", asy
     });
     const record = await disabled.dispatcher.dispatchSignal(event());
     assert.equal(record.status, "disabled");
-    assert.equal(disabled.provider.calls, 0);
+    assert.equal(disabled.transport.calls.length, 0);
   } finally {
     await rm(disabled.root, { recursive: true, force: true });
   }
 
-  const failed = await fixture(new FakeDiscordProvider(1));
+  const failed = await fixture(
+    new FakeDiscordTransport(["secret-1"]),
+  );
   try {
     const record = await failed.dispatcher.dispatchSignal(event());
     assert.equal(record.status, "failed");
@@ -229,7 +303,7 @@ test("disabled delivery is audited and provider errors are safely redacted", asy
     const retried = await failed.dispatcher.retryDelivery(record.deliveryId);
     assert.equal(retried.status, "sent");
     assert.equal(retried.retryCount, 1);
-    assert.equal(failed.provider.calls, 2);
+    assert.equal(failed.transport.calls.length, 2);
   } finally {
     await rm(failed.root, { recursive: true, force: true });
   }
@@ -254,7 +328,7 @@ test("daily summaries use canonical snapshots, honour staleness, and deduplicate
     });
     assert.equal(preview.status, "skipped");
     assert.match(preview.preview, /Actual portfolio value/);
-    assert.equal(value.provider.calls, 0);
+    assert.equal(value.transport.calls.length, 0);
     assert.equal((await value.deliveries.read()).length, 0);
 
     const first = await value.dispatcher.runDailySummary(currentContext, {
@@ -265,7 +339,7 @@ test("daily summaries use canonical snapshots, honour staleness, and deduplicate
     });
     assert.equal(first.status, "sent");
     assert.equal(duplicate.delivery.deliveryId, first.delivery.deliveryId);
-    assert.equal(value.provider.calls, 1);
+    assert.equal(value.transport.calls.length, 1);
 
     const stale = await value.dispatcher.runDailySummary(
       {
@@ -276,7 +350,7 @@ test("daily summaries use canonical snapshots, honour staleness, and deduplicate
     );
     assert.equal(stale.status, "skipped");
     assert.match(stale.reason, /stale/i);
-    assert.equal(value.provider.calls, 1);
+    assert.equal(value.transport.calls.length, 1);
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }
@@ -308,5 +382,289 @@ test("scheduler only runs at the configured server-side local time", async () =>
     assert.equal(result.status, "sent");
   } finally {
     await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("credential encryption round-trips and invalid keys fail safely", () => {
+  const key = parseCredentialEncryptionKey(
+    "a-secure-test-key-material-that-is-longer-than-thirty-two-bytes",
+  );
+  const cipher = new CredentialCipher(key);
+  const webhook =
+    "https://discord.com/api/webhooks/123456/private-token-value";
+  const encrypted = cipher.encrypt(webhook, "destination:test");
+  assert.equal(cipher.decrypt(encrypted, "destination:test"), webhook);
+  assert.equal(JSON.stringify(encrypted).includes(webhook), false);
+  assert.throws(
+    () => parseCredentialEncryptionKey("too-short"),
+    /at least 32 bytes/i,
+  );
+  assert.throws(
+    () => loadCredentialEncryptionKey({ NODE_ENV: "production" }, true),
+    /required in production/i,
+  );
+});
+
+test("destination CRUD masks plaintext and supports replace, test, toggle and delete", async () => {
+  const value = await fixture();
+  const plaintext =
+    "https://discord.com/api/webhooks/987654/super-private-token";
+  try {
+    const created = await value.manager.create({
+      label: "Operations",
+      webhook: plaintext,
+      enabled: true,
+      subscriptions: subscriptions(),
+      displayName: "Adaptive SuperTrend",
+      avatarUrl: "https://example.com/avatar.png",
+    });
+    assert.equal(created.maskedEnding, "oken");
+    assert.equal(created.enabled, false);
+    assert.deepEqual(created.subscriptions, noSubscriptions());
+    assert.equal(JSON.stringify(created).includes(plaintext), false);
+    const stored = JSON.stringify(
+      await value.store.read("discord_destinations.json"),
+    );
+    assert.equal(stored.includes(plaintext), false);
+
+    const updated = await value.manager.update(created.destinationId, {
+      enabled: true,
+      label: "Owner operations",
+    });
+    assert.equal(updated.enabled, true);
+    assert.equal(updated.label, "Owner operations");
+    assert.deepEqual(updated.subscriptions, noSubscriptions());
+
+    const replaced = await value.manager.replaceWebhook(
+      created.destinationId,
+      "https://discordapp.com/api/webhooks/987654/replacement-token",
+    );
+    assert.equal(replaced.maskedEnding, "oken");
+
+    const tested = await value.dispatcher.testDiscord(
+      created.destinationId,
+    );
+    assert.equal(tested.status, "sent");
+    assert.match(
+      value.transport.calls.at(-1).payload.embeds[0].title,
+      /Discord delivery test/,
+    );
+
+    await value.manager.delete(created.destinationId);
+    assert.equal(
+      (await value.manager.publicDestinations()).some(
+        (item) => item.destinationId === created.destinationId,
+      ),
+      false,
+    );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("fan-out isolates failures and preserves idempotency per destination", async () => {
+  const value = await fixture(
+    new FakeDiscordTransport(["secret-2"]),
+    2,
+  );
+  try {
+    await value.dispatcher.dispatchSignal(event());
+    const firstHistory = await value.deliveries.read();
+    const signalDeliveries = firstHistory.filter(
+      (delivery) => delivery.eventId === event().eventId,
+    );
+    assert.equal(signalDeliveries.length, 2);
+    assert.deepEqual(
+      signalDeliveries.map((delivery) => delivery.status).sort(),
+      ["failed", "sent"],
+    );
+    assert.equal(value.transport.calls.length, 2);
+
+    await value.dispatcher.dispatchSignal(event());
+    assert.equal(value.transport.calls.length, 2);
+    assert.equal(
+      new Set(signalDeliveries.map((delivery) => delivery.destinationId))
+        .size,
+      2,
+    );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("destination subscriptions route every category after global gates", async () => {
+  const value = await fixture(new FakeDiscordTransport(), 2);
+  const [first, second] = value.destinations;
+  try {
+    await value.manager.update(first.destinationId, {
+      subscriptions: noSubscriptions({
+        entry: true,
+        lowLiquidity: true,
+        watchlistOnly: true,
+        dailySummary: true,
+      }),
+    });
+    await value.manager.update(second.destinationId, {
+      subscriptions: noSubscriptions({
+        exit: true,
+        scannerError: true,
+        weeklySummary: true,
+      }),
+    });
+    await value.dispatcher.updateSettings({
+      signalAlerts: { watchlistOnly: true },
+    });
+
+    await value.dispatcher.dispatchSignal(event({ eventId: "route-entry" }));
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-exit",
+        signalState: "actionable_exit",
+        previousTrend: "green",
+        currentTrend: "red",
+      }),
+    );
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-liquidity",
+        signalState: "low_liquidity_warning",
+      }),
+    );
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-error",
+        signalState: "scanner_error",
+      }),
+    );
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-watchlist",
+        signalState: "watchlist_only",
+      }),
+    );
+
+    assert.deepEqual(
+      value.transport.calls.map(({ webhook }) => webhook.slice(-8)),
+      ["secret-1", "secret-2", "secret-1", "secret-2", "secret-1"],
+    );
+
+    const weeklyTargets = await value.manager.deliveryTargets(
+      "weeklySummary",
+      false,
+    );
+    assert.deepEqual(
+      weeklyTargets.map((target) => target.destinationId),
+      [second.destinationId],
+    );
+
+    const daily = await value.dispatcher.runDailySummary(
+      {
+        snapshot: snapshot(),
+        latestActionableEvent: event(),
+        scanner: {
+          status: "current",
+          lastSuccessfulScanAt: "2026-06-19T20:00:00.000Z",
+          staleAfterMinutes: 180,
+        },
+      },
+      { now: new Date("2026-06-19T20:15:00.000Z") },
+    );
+    assert.equal(daily.status, "sent");
+    assert.equal(
+      value.transport.calls.at(-1).webhook.endsWith("secret-1"),
+      true,
+    );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("no subscribed enabled destination records one skipped audit result", async () => {
+  const value = await fixture();
+  try {
+    await value.manager.update(value.destinations[0].destinationId, {
+      subscriptions: noSubscriptions(),
+    });
+    const result = await value.dispatcher.dispatchSignal(
+      event({ eventId: "no-entry-subscriber" }),
+    );
+    assert.equal(result.status, "skipped");
+    assert.match(
+      result.errorMessage,
+      /no enabled Discord destination is subscribed/i,
+    );
+    assert.equal(result.destinationId ?? null, null);
+    assert.equal(value.transport.calls.length, 0);
+    assert.equal(
+      (await value.deliveries.read()).filter(
+        (delivery) => delivery.eventId === "no-entry-subscriber",
+      ).length,
+      1,
+    );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("Discord embed templates are compact, color-routed and contain no plaintext fallback", () => {
+  const open = signalDiscordPayload(event());
+  const close = signalDiscordPayload(
+    event({ signalState: "actionable_exit", previousTrend: "green", currentTrend: "red" }),
+  );
+  const error = signalDiscordPayload(
+    event({ signalState: "scanner_error", reasonText: "Safe scanner error." }),
+  );
+  const liquidity = signalDiscordPayload(
+    event({ signalState: "low_liquidity_warning", reasonText: "Wide executable spread." }),
+  );
+  const daily = dailySummaryDiscordPayload({
+    localDate: "2026-06-19",
+    snapshot: snapshot(),
+    latestActionableEvent: event(),
+    scanner: {
+      status: "current",
+      lastSuccessfulScanAt: "2026-06-19T20:00:00.000Z",
+      importedEvents: 2,
+      warningCount: 1,
+      errorCount: 0,
+      watchlist: [
+        { tradeTicker: "TQQQ", currentTrend: "Green" },
+        { tradeTicker: "SQQQ", currentTrend: "Red" },
+      ],
+    },
+    settings: settings(),
+  });
+
+  assert.match(open.embeds[0].title, /ACTIONABLE ENTRY/);
+  assert.match(close.embeds[0].title, /ACTIONABLE EXIT/);
+  assert.match(error.embeds[0].title, /SCANNER ERROR/);
+  assert.match(liquidity.embeds[0].title, /LOW LIQUIDITY/);
+  assert.deepEqual(
+    [
+      open.embeds[0].color,
+      close.embeds[0].color,
+      error.embeds[0].color,
+      liquidity.embeds[0].color,
+      daily.embeds.map((embed) => embed.color),
+    ],
+    [
+      discordColors.green,
+      discordColors.red,
+      discordColors.red,
+      discordColors.amber,
+      [discordColors.gold, discordColors.blue, discordColors.green],
+    ],
+  );
+  for (const payload of [
+    open,
+    close,
+    error,
+    liquidity,
+    daily,
+    testDiscordPayload(),
+  ]) {
+    assert.equal("content" in payload, false);
+    assert.equal(validateDiscordPayload(payload), payload);
+    assert.ok(JSON.stringify(payload).length < 20_000);
   }
 });

@@ -31,6 +31,7 @@ export const disabledNotificationSettings: NotificationSettings = {
   migration: {
     legacyScannerDiscordEnabled: false,
     canonicalDashboardDiscordEnabled: false,
+    legacyServerDiscordAlongsideManaged: false,
   },
   signalAlerts: {
     entry: false,
@@ -256,6 +257,13 @@ function runtimeDefaults(username: string, role: AccountRole) {
     ["audit_log.json", []],
     ["scanner_import_state.json", awaitingScannerState],
     ["notification_settings.json", disabledNotificationSettings],
+    [
+      "discord_destinations.json",
+      {
+        version: 1,
+        destinations: [],
+      },
+    ],
     [
       "signal_decisions.json",
       {

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { DiscordWebhookPayload } from "./discordEmbeds.js";
 import { JsonStore } from "./store.js";
 
 export type SignalState =
@@ -86,6 +87,8 @@ export interface AlertDelivery {
   deliveryId: string;
   eventId: string | null;
   notificationKey: string;
+  destinationId?: string | null;
+  destinationLabel?: string | null;
   channel: AlertChannel;
   status: AlertDeliveryStatus;
   attemptedAt: string;
@@ -95,6 +98,7 @@ export interface AlertDelivery {
   retryCount: number;
   category?: "signal" | "daily_summary" | "weekly_summary" | "test";
   message?: string;
+  discordPayload?: DiscordWebhookPayload;
 }
 
 interface AlertDeliveryFile {
@@ -737,6 +741,9 @@ export class AlertDeliveryRepository {
         notificationKey:
           optionalText(input.notificationKey, 500) ||
           `${channel}:${category || "signal"}:${optionalText(input.eventId, 200) || "legacy"}`,
+        destinationId: optionalText(input.destinationId, 200) || null,
+        destinationLabel:
+          optionalText(input.destinationLabel, 200) || null,
         channel,
         status,
         attemptedAt,
@@ -803,9 +810,12 @@ export class AlertDeliveryRepository {
       deliveredAt: nullableIsoDate(input.deliveredAt, "deliveredAt"),
       retryCount: Math.max(0, Math.floor(input.retryCount)),
       notificationKey: input.notificationKey.slice(0, 500),
+      destinationId: input.destinationId?.slice(0, 200) ?? null,
+      destinationLabel: input.destinationLabel?.slice(0, 200) ?? null,
       errorMessage: input.errorMessage?.slice(0, 1_000) ?? null,
       providerReference: input.providerReference?.slice(0, 500) ?? null,
       message: input.message?.slice(0, 2_000),
+      discordPayload: input.discordPayload,
     };
     file.isExample = false;
     file.deliveries.unshift(delivery);
@@ -849,6 +859,7 @@ export class AlertDeliveryRepository {
         | "providerReference"
         | "retryCount"
         | "message"
+        | "discordPayload"
       >
     >,
   ) {
@@ -882,6 +893,9 @@ export class AlertDeliveryRepository {
     }
     if ("message" in patch) {
       delivery.message = patch.message?.slice(0, 2_000);
+    }
+    if ("discordPayload" in patch) {
+      delivery.discordPayload = patch.discordPayload;
     }
     file.isExample = false;
     await this.writeFile(file);

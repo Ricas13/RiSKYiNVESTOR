@@ -21,8 +21,8 @@ import type {
   NotificationPublicState,
   NotificationSettings,
 } from "../types";
-import { formatDateTime } from "../utils/format";
 import { DataPortability } from "./DataPortability";
+import { DiscordDestinations } from "./DiscordDestinations";
 import { NotificationHistory } from "./SignalEvents";
 import { Badge, SectionHeader } from "./ui";
 
@@ -93,8 +93,6 @@ export function SettingsPage({
     }
   }
 
-  const discord = notifications.providers.discord;
-
   return (
     <div className="control-page-stack">
       <DataStatusOnboarding
@@ -111,54 +109,15 @@ export function SettingsPage({
         copy="Discord delivery uses canonical signal events and portfolio snapshots. Credentials stay on the server and are never returned to this page."
       />
 
-      <div className="settings-grid">
-        <section className="settings-card">
-          <div className="settings-card__heading">
-            <MessageCircle size={20} />
-            <div>
-              <h2>Discord</h2>
-              <p>Primary live notification provider.</p>
-            </div>
-            <Badge tone={discord.configured ? "green" : "amber"}>
-              {discord.configured ? "CONFIGURED" : "NOT CONFIGURED"}
-            </Badge>
-          </div>
-          <Toggle
-            label="Discord notifications"
-            checked={settings.discord.enabled}
-            onChange={(enabled) =>
-              set("discord", { ...settings.discord, enabled })
-            }
-          />
-          <p className="settings-note">
-            Webhook status:{" "}
-            {discord.configured
-              ? `configured, ending ${discord.maskedEnding ?? "****"}`
-              : "not configured"}
-            . Last successful delivery:{" "}
-            {discord.lastSuccessfulDeliveryAt
-              ? formatDateTime(discord.lastSuccessfulDeliveryAt)
-              : "none"}.
-          </p>
-          <div className="settings-actions">
-            <button
-              className="button button--secondary"
-              disabled={busy || !discord.configured}
-              onClick={() =>
-                run(
-                  () =>
-                    mutate("/notifications/test", "POST", {
-                      dryRun: false,
-                    }),
-                  "Discord test completed.",
-                )
-              }
-            >
-              <Send size={15} /> Send harmless test
-            </button>
-          </div>
-        </section>
+      <DiscordDestinations
+        destinations={notifications.providers.discord.destinations}
+        legacyDestination={
+          notifications.providers.discord.legacyDestination
+        }
+        mutate={mutate}
+      />
 
+      <div className="settings-grid">
         <section className="settings-card settings-card--muted">
           <div className="settings-card__heading">
             <MessageCircle size={20} />
@@ -189,6 +148,13 @@ export function SettingsPage({
           </div>
         </div>
         <Toggle
+          label="Enable Discord notifications"
+          checked={settings.discord.enabled}
+          onChange={(enabled) =>
+            set("discord", { ...settings.discord, enabled })
+          }
+        />
+        <Toggle
           label="Legacy scanner Discord is enabled"
           checked={settings.migration.legacyScannerDiscordEnabled}
           onChange={(legacyScannerDiscordEnabled) =>
@@ -205,6 +171,18 @@ export function SettingsPage({
             set("migration", {
               ...settings.migration,
               canonicalDashboardDiscordEnabled,
+            })
+          }
+        />
+        <Toggle
+          label="Allow legacy server destination alongside UI-managed destinations"
+          checked={
+            settings.migration.legacyServerDiscordAlongsideManaged
+          }
+          onChange={(legacyServerDiscordAlongsideManaged) =>
+            set("migration", {
+              ...settings.migration,
+              legacyServerDiscordAlongsideManaged,
             })
           }
         />
@@ -370,7 +348,7 @@ export function SettingsPage({
             />
           </label>
           <label className="field">
-            <span>Minimum absolute daily P/L (£)</span>
+            <span>Minimum absolute daily P/L ({"\u00a3"})</span>
             <input
               type="number"
               min="0"
@@ -567,7 +545,7 @@ function DataStatusOnboarding({
   function tone(value: DataClassification) {
     if (value === "Demo" || value === "Mixed") return "amber" as const;
     if (value === "Live") return "green" as const;
-    if (value === "Unknown — requires review") return "red" as const;
+    if (value === "Unknown \u2014 requires review") return "red" as const;
     return "blue" as const;
   }
 
@@ -599,7 +577,7 @@ function DataStatusOnboarding({
             <strong>{area.recordCount} records</strong>
             <p>{area.explanation}</p>
             <small>
-              Demo {area.demoCount} · Live {area.liveCount} · Review{" "}
+              Demo {area.demoCount} {"\u00b7"} Live {area.liveCount} {"\u00b7"} Review{" "}
               {area.unknownCount}
             </small>
           </article>

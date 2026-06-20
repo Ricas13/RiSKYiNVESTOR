@@ -1,4 +1,17 @@
 import { randomUUID } from "node:crypto";
+import {
+  DiscordDestinationManager,
+  type DiscordDeliveryTarget,
+  type DiscordNotificationCategory,
+} from "./discordDestinations.js";
+import {
+  applyWebhookIdentity,
+  dailySummaryDiscordPayload,
+  signalDiscordPayload,
+  testDiscordPayload,
+  validateDiscordPayload,
+  type DiscordWebhookPayload,
+} from "./discordEmbeds.js";
 import { JsonStore } from "./store.js";
 import {
   AlertDeliveryRepository,
@@ -17,6 +30,7 @@ export interface NotificationSettings {
   migration: {
     legacyScannerDiscordEnabled: boolean;
     canonicalDashboardDiscordEnabled: boolean;
+    legacyServerDiscordAlongsideManaged: boolean;
   };
   signalAlerts: {
     entry: boolean;
@@ -70,12 +84,6 @@ export interface NotificationSettings {
   };
 }
 
-export interface NotificationCredentials {
-  version: 1;
-  discordWebhookUrl: string | null;
-  whatsapp: Record<string, never>;
-}
-
 export interface DailyPLReport {
   reportDate: string;
   actualDailyPL: number;
@@ -91,21 +99,7 @@ export interface DailyPLReport {
   actionableSignalEvents: number;
 }
 
-export interface ProviderSendResult {
-  providerReference: string | null;
-}
-
-export interface NotificationProvider {
-  id: "discord" | "whatsapp" | "noop";
-  available: boolean;
-  configured(): Promise<boolean>;
-  maskedEnding(): Promise<string | null>;
-  send(message: string): Promise<ProviderSendResult>;
-}
-
-type CredentialLoader = () => Promise<NotificationCredentials>;
-
-function safeError(error: unknown) {
+export function safeNotificationError(error: unknown) {
   const raw =
     error instanceof Error ? error.message : "Notification delivery failed.";
   return raw
@@ -120,101 +114,6 @@ function safeError(error: unknown) {
     .slice(0, 1_000);
 }
 
-function validDiscordWebhook(value: string) {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      ["discord.com", "discordapp.com"].includes(url.hostname) &&
-      url.pathname.startsWith("/api/webhooks/")
-    );
-  } catch {
-    return false;
-  }
-}
-
-export class DiscordNotificationProvider implements NotificationProvider {
-  readonly id = "discord" as const;
-  readonly available = true;
-
-  constructor(private readonly credentials: CredentialLoader) {}
-
-  private async webhook() {
-    const value = (await this.credentials()).discordWebhookUrl?.trim() ?? "";
-    return validDiscordWebhook(value) ? value : null;
-  }
-
-  async configured() {
-    return Boolean(await this.webhook());
-  }
-
-  async maskedEnding() {
-    const webhook = await this.webhook();
-    return webhook ? webhook.slice(-4) : null;
-  }
-
-  async send(message: string) {
-    const webhook = await this.webhook();
-    if (!webhook) throw new Error("Discord webhook is not configured.");
-    const url = new URL(webhook);
-    url.searchParams.set("wait", "true");
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: message.slice(0, 1_900) }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) {
-      throw new Error(`Discord delivery failed (${response.status}).`);
-    }
-    const body = (await response.json().catch(() => ({}))) as {
-      id?: unknown;
-    };
-    return {
-      providerReference:
-        typeof body.id === "string" ? body.id.slice(0, 100) : null,
-    };
-  }
-}
-
-export class WhatsAppNotificationProviderStub
-  implements NotificationProvider
-{
-  readonly id = "whatsapp" as const;
-  readonly available = false;
-
-  async configured() {
-    return false;
-  }
-
-  async maskedEnding() {
-    return null;
-  }
-
-  async send(message: string): Promise<ProviderSendResult> {
-    void message;
-    throw new Error("WhatsApp delivery is not configured.");
-  }
-}
-
-export class NoopNotificationProvider implements NotificationProvider {
-  readonly id = "noop" as const;
-  readonly available = true;
-
-  async configured() {
-    return true;
-  }
-
-  async maskedEnding() {
-    return null;
-  }
-
-  async send(message: string): Promise<ProviderSendResult> {
-    void message;
-    return { providerReference: null };
-  }
-}
-
 export interface DailySummaryContext {
   snapshot: DailyPortfolioSnapshot | null;
   latestActionableEvent: SignalEvent | null;
@@ -222,6 +121,15 @@ export interface DailySummaryContext {
     status: "awaiting" | "current" | "stale" | "error";
     lastSuccessfulScanAt: string | null;
     staleAfterMinutes: number;
+    summary?: string | null;
+    importedEvents?: number;
+    warningCount?: number;
+    errorCount?: number;
+    watchlist?: Array<{
+      tradeTicker?: string;
+      underlyingTicker?: string;
+      currentTrend?: string;
+    }>;
   };
 }
 
@@ -289,6 +197,17 @@ function toggleFor(eventType: SignalState, settings: NotificationSettings) {
   return false;
 }
 
+function destinationCategoryFor(
+  eventType: SignalState,
+): DiscordNotificationCategory | null {
+  if (eventType === "actionable_entry") return "entry";
+  if (eventType === "actionable_exit") return "exit";
+  if (eventType === "low_liquidity_warning") return "lowLiquidity";
+  if (eventType === "scanner_error") return "scannerError";
+  if (eventType === "watchlist_only") return "watchlistOnly";
+  return null;
+}
+
 function money(value: number | null) {
   if (value === null) return "unavailable";
   return new Intl.NumberFormat("en-GB", {
@@ -314,6 +233,9 @@ function normaliseSettings(value: Partial<NotificationSettings>) {
         value.migration?.legacyScannerDiscordEnabled !== false,
       canonicalDashboardDiscordEnabled: Boolean(
         value.migration?.canonicalDashboardDiscordEnabled,
+      ),
+      legacyServerDiscordAlongsideManaged: Boolean(
+        value.migration?.legacyServerDiscordAlongsideManaged,
       ),
     },
     signalAlerts: {
@@ -403,11 +325,11 @@ function signalMessage(event: SignalEvent) {
         ? "ACTIONABLE EXIT"
         : event.signalState.replaceAll("_", " ").toUpperCase();
   return [
-    `Risky Investor · ${heading}`,
-    `${event.underlyingTicker} → ${event.tradeTicker}`,
+    `Risky Investor - ${heading}`,
+    `${event.underlyingTicker} -> ${event.tradeTicker}`,
     event.reasonText,
-    `Trend: ${event.previousTrend} → ${event.currentTrend}`,
-    `Tier: ${event.riskTier} · Eligibility: ${event.eligibility}`,
+    `Trend: ${event.previousTrend} -> ${event.currentTrend}`,
+    `Tier: ${event.riskTier} - Eligibility: ${event.eligibility}`,
     `Allocation: ${event.allocationPercent}% (${event.allocationStatus})`,
     `Occurred: ${event.occurredAt}`,
     `Event: ${event.eventId}`,
@@ -416,25 +338,11 @@ function signalMessage(event: SignalEvent) {
 }
 
 export class NotificationDispatcher {
-  private readonly discord: NotificationProvider;
-  private readonly whatsapp = new WhatsAppNotificationProviderStub();
-  private readonly noop = new NoopNotificationProvider();
-
   constructor(
     private readonly store: JsonStore,
     private readonly deliveries: AlertDeliveryRepository,
-    credentials?: CredentialLoader,
-    discordProvider?: NotificationProvider,
-  ) {
-    const credentialLoader =
-      credentials ??
-      (() =>
-        this.store.read<NotificationCredentials>(
-          "notification_credentials.json",
-        ));
-    this.discord =
-      discordProvider ?? new DiscordNotificationProvider(credentialLoader);
-  }
+    private readonly destinations: DiscordDestinationManager,
+  ) {}
 
   async settings() {
     const raw = await this.store.read<Partial<NotificationSettings>>(
@@ -444,32 +352,66 @@ export class NotificationDispatcher {
   }
 
   async publicState() {
-    const [settings, deliveryHistory, configured, maskedEnding] =
+    const [settings, deliveryHistory, managedDestinations] =
       await Promise.all([
         this.settings(),
         this.deliveries.read(),
-        this.discord.configured(),
-        this.discord.maskedEnding(),
+        this.destinations.publicDestinations(),
       ]);
+    const managedEnabled = managedDestinations.filter(
+      (destination) => destination.enabled,
+    );
+    const legacyDelivery = deliveryHistory.find(
+      (delivery) =>
+        delivery.destinationId === "legacy-server-configured",
+    );
+    const legacyEnabled =
+      managedEnabled.length === 0 ||
+      settings.migration.legacyServerDiscordAlongsideManaged;
+    const legacyDestination = this.destinations.publicLegacyDestination(
+      legacyEnabled,
+      {
+        lastTestAt:
+          legacyDelivery?.category === "test"
+            ? legacyDelivery.attemptedAt
+            : null,
+        lastSuccessfulDeliveryAt:
+          legacyDelivery?.status === "sent"
+            ? legacyDelivery.deliveredAt
+            : null,
+        latestResult: legacyDelivery?.status ?? null,
+      },
+    );
+    const allDestinations = [
+      ...managedDestinations,
+      ...(legacyDestination ? [legacyDestination] : []),
+    ];
     const lastSuccess = deliveryHistory.find(
       (delivery) =>
-        delivery.channel === "discord" && delivery.status === "sent",
+        (delivery.channel === "discord" ||
+          delivery.channel === "daily_summary") &&
+        delivery.status === "sent",
     );
     const latestDiscord = deliveryHistory.find(
-      (delivery) => delivery.channel === "discord",
+      (delivery) =>
+        delivery.channel === "discord" ||
+        delivery.channel === "daily_summary",
     );
     return {
       settings,
       providers: {
         discord: {
-          configured,
-          available: this.discord.available,
-          maskedEnding,
+          configured: allDestinations.length > 0,
+          available: true,
+          maskedEnding:
+            allDestinations[0]?.maskedEnding ?? null,
           lastSuccessfulDeliveryAt: lastSuccess?.deliveredAt ?? null,
           latestResult: latestDiscord?.status ?? null,
+          destinations: managedDestinations,
+          legacyDestination,
         },
         whatsapp: {
-          configured: await this.whatsapp.configured(),
+          configured: false,
           available: false,
           maskedEnding: null,
           lastSuccessfulDeliveryAt: null,
@@ -533,10 +475,6 @@ export class NotificationDispatcher {
     ) {
       return null;
     }
-    const notificationKey = `discord:signal:${event.eventId}`;
-    const existing = await this.deliveries.findByKey(notificationKey);
-    if (existing && !force) return existing;
-
     const settings = await this.settings();
     let blockedStatus: AlertDeliveryStatus | null = null;
     let blockedReason: string | null = null;
@@ -562,66 +500,127 @@ export class NotificationDispatcher {
     } else if (isQuiet(settings)) {
       blockedStatus = "skipped";
       blockedReason = "Quiet hours are active.";
-    } else if (!(await this.discord.configured())) {
-      blockedStatus = "disabled";
-      blockedReason = "Discord webhook is not configured.";
     }
 
     const message = signalMessage(event);
     if (blockedStatus) {
       return this.recordFinal({
-        notificationKey,
+        notificationKey: `discord:signal:${event.eventId}:gated`,
         eventId: event.eventId,
         channel: "discord",
         category: "signal",
         status: blockedStatus,
         message,
         errorMessage: blockedReason,
-        retryCount: existing?.retryCount ?? 0,
+        retryCount: 0,
       });
     }
-    return this.attempt({
-      notificationKey,
-      eventId: event.eventId,
-      channel: "discord",
-      category: "signal",
-      message,
-      retryCount: existing?.retryCount ?? 0,
-      existingDeliveryId: existing?.deliveryId,
-    });
+    const destinationCategory = destinationCategoryFor(event.signalState);
+    if (!destinationCategory) return null;
+    const targets = await this.destinations.deliveryTargets(
+      destinationCategory,
+      settings.migration.legacyServerDiscordAlongsideManaged,
+    );
+    if (!targets.length) {
+      return this.recordFinal({
+        notificationKey: `discord:signal:${event.eventId}:no-subscribed-destination`,
+        eventId: event.eventId,
+        channel: "discord",
+        category: "signal",
+        status: "skipped",
+        message,
+        errorMessage:
+          "No enabled Discord destination is subscribed to this notification category.",
+        retryCount: 0,
+      });
+    }
+    const payload = validateDiscordPayload(signalDiscordPayload(event));
+    const results: AlertDelivery[] = [];
+    for (const target of targets) {
+      const notificationKey =
+        `discord:signal:${event.eventId}:${target.destinationId}`;
+      const existing = await this.deliveries.findByKey(notificationKey);
+      results.push(
+        existing && !force
+          ? existing
+          : await this.attempt({
+          notificationKey,
+          eventId: event.eventId,
+          channel: "discord",
+          category: "signal",
+          message,
+          payload,
+          target,
+          retryCount: existing?.retryCount ?? 0,
+          existingDeliveryId: existing?.deliveryId,
+            }),
+      );
+    }
+    return results[0] ?? null;
   }
 
-  async testDiscord(dryRun = false) {
-    const message = "Risky Investor notification test — no trading action.";
-    const notificationKey = `discord:test:${randomUUID()}`;
+  async testDiscord(destinationId?: string, dryRun = false) {
+    const message = "Risky Investor notification test - no trading action.";
     if (dryRun) {
-      await this.noop.send(message);
       return {
         status: "skipped" as const,
         preview: message,
         delivery: null,
       };
     }
-    if (!(await this.discord.configured())) {
+    if (!destinationId) {
+      const settings = await this.settings();
+      if (
+        !settings.migration.canonicalDashboardDiscordEnabled ||
+        !settings.discord.enabled
+      ) {
+        const reason = !settings.migration.canonicalDashboardDiscordEnabled
+          ? "Canonical dashboard Discord is disabled."
+          : "Discord notifications are disabled.";
+        const delivery = await this.recordFinal({
+          notificationKey: `discord:test:disabled:${randomUUID()}`,
+          eventId: null,
+          channel: "discord",
+          category: "test",
+          status: "disabled",
+          message,
+          errorMessage:
+            `${reason} Discord destination is not configured or enabled.`,
+          retryCount: 0,
+        });
+        return { status: delivery.status, preview: message, delivery };
+      }
+      destinationId = (
+        await this.destinations.deliveryTargets(
+          null,
+          settings.migration.legacyServerDiscordAlongsideManaged,
+        )
+      )[0]?.destinationId;
+    }
+    if (!destinationId) {
       const delivery = await this.recordFinal({
-        notificationKey,
+        notificationKey: `discord:test:unconfigured:${randomUUID()}`,
         eventId: null,
         channel: "discord",
         category: "test",
         status: "disabled",
         message,
-        errorMessage: "Discord webhook is not configured.",
+        errorMessage: "Discord destination is not configured or enabled.",
         retryCount: 0,
       });
       return { status: delivery.status, preview: message, delivery };
     }
+    const target = await this.destinations.target(destinationId);
     const delivery = await this.attempt({
-      notificationKey,
+      notificationKey: `discord:test:${destinationId}:${randomUUID()}`,
       eventId: null,
       channel: "discord",
       category: "test",
       message,
+      payload: validateDiscordPayload(testDiscordPayload()),
+      target,
       retryCount: 0,
+      tested: true,
     });
     return { status: delivery.status, preview: message, delivery };
   }
@@ -633,7 +632,7 @@ export class NotificationDispatcher {
   ) {
     const snapshot = context.snapshot;
     const localDate = zonedClock(now, settings.dailySummary.timezone).date;
-    const lines = [`Risky Investor daily P/L summary · ${localDate}`];
+    const lines = [`Risky Investor daily P/L summary - ${localDate}`];
     const metrics = settings.dailySummary.metrics;
     if (!snapshot) {
       lines.push("Portfolio snapshot: unavailable.");
@@ -658,7 +657,7 @@ export class NotificationDispatcher {
       }
       if (metrics.contributionsWithdrawals) {
         lines.push(
-          `Contributions: ${money(snapshot.contributions)} · withdrawals: ${money(snapshot.withdrawals)}.`,
+          `Contributions: ${money(snapshot.contributions)} - withdrawals: ${money(snapshot.withdrawals)}.`,
         );
       }
       if (metrics.drawdown) {
@@ -666,7 +665,7 @@ export class NotificationDispatcher {
       }
       if (metrics.cashInvested) {
         lines.push(
-          `Cash: ${money(snapshot.cashValue)} · invested: ${money(snapshot.investedValue)}.`,
+          `Cash: ${money(snapshot.cashValue)} - invested: ${money(snapshot.investedValue)}.`,
         );
       }
     }
@@ -674,7 +673,7 @@ export class NotificationDispatcher {
       const event = context.latestActionableEvent;
       lines.push(
         event
-          ? `Latest actionable signal: ${event.signalState} ${event.tradeTicker} · ${event.reasonText}`
+          ? `Latest actionable signal: ${event.signalState} ${event.tradeTicker} - ${event.reasonText}`
           : "Latest actionable signal: none.",
       );
     }
@@ -682,7 +681,7 @@ export class NotificationDispatcher {
       lines.push(
         `Scanner status: ${context.scanner.status}` +
           (context.scanner.lastSuccessfulScanAt
-            ? ` · last success ${context.scanner.lastSuccessfulScanAt}`
+            ? ` - last success ${context.scanner.lastSuccessfulScanAt}`
             : ""),
       );
     }
@@ -703,7 +702,17 @@ export class NotificationDispatcher {
     const now = options.now ?? new Date();
     const rendered = this.renderDailySummary(context, settings, now);
     const snapshot = context.snapshot;
-    const notificationKey = `daily_summary:${rendered.localDate}:${settings.dailySummary.timezone}`;
+    const baseNotificationKey =
+      `daily_summary:${rendered.localDate}:${settings.dailySummary.timezone}`;
+    const payload = validateDiscordPayload(
+      dailySummaryDiscordPayload({
+        localDate: rendered.localDate,
+        snapshot,
+        latestActionableEvent: context.latestActionableEvent,
+        scanner: context.scanner,
+        settings,
+      }),
+    );
 
     const blockedReason = (() => {
       if (!options.force && !settings.dailySummary.enabled) {
@@ -743,7 +752,7 @@ export class NotificationDispatcher {
       let delivery: AlertDelivery | null = null;
       if (options.recordDryRun) {
         delivery = await this.recordFinal({
-          notificationKey: `${notificationKey}:dry-run:${randomUUID()}`,
+          notificationKey: `${baseNotificationKey}:dry-run:${randomUUID()}`,
           eventId: snapshot?.snapshotId ?? null,
           channel: "daily_summary",
           category: "daily_summary",
@@ -761,19 +770,9 @@ export class NotificationDispatcher {
       };
     }
 
-    const existing = await this.deliveries.findByKey(notificationKey);
-    if (existing && !options.force) {
-      return {
-        status: existing.status,
-        preview: rendered.message,
-        reason: "Daily summary already attempted for this local date.",
-        delivery: existing,
-      };
-    }
-
     if (blockedReason) {
       const delivery = await this.recordFinal({
-        notificationKey,
+        notificationKey: `${baseNotificationKey}:gated`,
         eventId: snapshot?.snapshotId ?? null,
         channel: "daily_summary",
         category: "daily_summary",
@@ -784,7 +783,7 @@ export class NotificationDispatcher {
             : "skipped",
         message: rendered.message,
         errorMessage: blockedReason,
-        retryCount: existing?.retryCount ?? 0,
+        retryCount: 0,
       });
       return {
         status: delivery.status,
@@ -795,23 +794,20 @@ export class NotificationDispatcher {
     }
     if (
       !settings.migration.canonicalDashboardDiscordEnabled ||
-      !settings.discord.enabled ||
-      !(await this.discord.configured())
+      !settings.discord.enabled
     ) {
       const reason = !settings.migration.canonicalDashboardDiscordEnabled
         ? "Canonical dashboard Discord is disabled."
-        : !settings.discord.enabled
-          ? "Discord notifications are disabled."
-          : "Discord webhook is not configured.";
+        : "Discord notifications are disabled.";
       const delivery = await this.recordFinal({
-        notificationKey,
+        notificationKey: `${baseNotificationKey}:disabled`,
         eventId: snapshot?.snapshotId ?? null,
         channel: "daily_summary",
         category: "daily_summary",
         status: "disabled",
         message: rendered.message,
         errorMessage: reason,
-        retryCount: existing?.retryCount ?? 0,
+        retryCount: 0,
       });
       return {
         status: delivery.status,
@@ -821,23 +817,59 @@ export class NotificationDispatcher {
       };
     }
 
-    const delivery = await this.attempt({
-      notificationKey,
-      eventId: snapshot!.snapshotId,
-      channel: "daily_summary",
-      category: "daily_summary",
-      message: rendered.message,
-      retryCount: existing?.retryCount ?? 0,
-      existingDeliveryId: existing?.deliveryId,
-    });
-    if (delivery.status === "sent") {
+    const targets = await this.destinations.deliveryTargets(
+      "dailySummary",
+      settings.migration.legacyServerDiscordAlongsideManaged,
+    );
+    if (!targets.length) {
+      const delivery = await this.recordFinal({
+        notificationKey: `${baseNotificationKey}:no-subscribed-destination`,
+        eventId: snapshot!.snapshotId,
+        channel: "daily_summary",
+        category: "daily_summary",
+        status: "skipped",
+        message: rendered.message,
+        errorMessage:
+          "No enabled Discord destination is subscribed to daily summaries.",
+        retryCount: 0,
+      });
+      return {
+        status: delivery.status,
+        preview: rendered.message,
+        reason: delivery.errorMessage,
+        delivery,
+      };
+    }
+    const deliveries: AlertDelivery[] = [];
+    for (const target of targets) {
+      const notificationKey =
+        `${baseNotificationKey}:${target.destinationId}`;
+      const existing = await this.deliveries.findByKey(notificationKey);
+      deliveries.push(
+        existing && !options.force
+          ? existing
+          : await this.attempt({
+          notificationKey,
+          eventId: snapshot!.snapshotId,
+          channel: "daily_summary",
+          category: "daily_summary",
+          message: rendered.message,
+          payload,
+          target,
+          retryCount: existing?.retryCount ?? 0,
+          existingDeliveryId: existing?.deliveryId,
+            }),
+      );
+    }
+    const delivery = deliveries[0] ?? null;
+    if (deliveries.some((item) => item.status === "sent")) {
       settings.dailySummary.lastSentDate = rendered.localDate;
       await this.store.write("notification_settings.json", settings);
     }
     return {
-      status: delivery.status,
+      status: delivery?.status ?? "disabled",
       preview: rendered.message,
-      reason: delivery.errorMessage,
+      reason: delivery?.errorMessage ?? null,
       delivery,
     };
   }
@@ -854,9 +886,6 @@ export class NotificationDispatcher {
         "Canonical dashboard Discord must be enabled before retrying.",
       );
     }
-    if (!(await this.discord.configured())) {
-      throw new Error("Discord webhook is not configured.");
-    }
     if (
       delivery.channel !== "discord" &&
       delivery.channel !== "daily_summary"
@@ -869,6 +898,10 @@ export class NotificationDispatcher {
     if (delivery.status !== "failed" && delivery.status !== "sent") {
       throw new Error("Only failed or explicitly confirmed sent deliveries can retry.");
     }
+    if (!delivery.destinationId) {
+      throw new Error("Delivery destination is unavailable.");
+    }
+    const target = await this.destinations.target(delivery.destinationId);
     return this.attempt({
       notificationKey: delivery.notificationKey,
       eventId: delivery.eventId,
@@ -880,6 +913,10 @@ export class NotificationDispatcher {
             ? "test"
             : "signal",
       message: delivery.message ?? "Risky Investor notification.",
+      payload:
+        delivery.discordPayload ??
+        validateDiscordPayload(testDiscordPayload()),
+      target,
       retryCount: delivery.retryCount + 1,
       existingDeliveryId: delivery.deliveryId,
     });
@@ -891,8 +928,11 @@ export class NotificationDispatcher {
     channel: "discord" | "daily_summary";
     category: "signal" | "daily_summary" | "test";
     message: string;
+    payload: DiscordWebhookPayload;
+    target: DiscordDeliveryTarget;
     retryCount: number;
     existingDeliveryId?: string;
+    tested?: boolean;
   }) {
     const attemptedAt = new Date().toISOString();
     let delivery = input.existingDeliveryId
@@ -904,11 +944,14 @@ export class NotificationDispatcher {
           providerReference: null,
           retryCount: input.retryCount,
           message: input.message,
+          discordPayload: input.payload,
         })
       : await this.deliveries.record({
           deliveryId: randomUUID(),
           eventId: input.eventId,
           notificationKey: input.notificationKey,
+          destinationId: input.target.destinationId,
+          destinationLabel: input.target.label,
           channel: input.channel,
           status: "pending",
           attemptedAt,
@@ -918,23 +961,41 @@ export class NotificationDispatcher {
           retryCount: input.retryCount,
           category: input.category,
           message: input.message,
+          discordPayload: input.payload,
         });
     if (!delivery) throw new Error("Delivery record not found.");
     try {
-      const result = await this.discord.send(input.message);
+      const result = await this.destinations.transport.send(
+        input.target.webhook,
+        applyWebhookIdentity(input.payload, {
+          displayName: input.target.displayName,
+          avatarUrl: input.target.avatarUrl,
+        }),
+      );
+      const deliveredAt = new Date().toISOString();
       delivery = (await this.deliveries.update(delivery.deliveryId, {
         status: "sent",
-        deliveredAt: new Date().toISOString(),
+        deliveredAt,
         errorMessage: null,
         providerReference: result.providerReference,
       }))!;
+      await this.destinations.recordResult(
+        input.target.destinationId,
+        "sent",
+        { tested: input.tested, deliveredAt },
+      );
     } catch (error) {
       delivery = (await this.deliveries.update(delivery.deliveryId, {
         status: "failed",
         deliveredAt: null,
-        errorMessage: safeError(error),
+        errorMessage: safeNotificationError(error),
         providerReference: null,
       }))!;
+      await this.destinations.recordResult(
+        input.target.destinationId,
+        "failed",
+        { tested: input.tested },
+      );
     }
     return delivery;
   }

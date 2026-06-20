@@ -117,6 +117,8 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
       RISKY_INVESTOR_USERNAME_FILE: usernameFile,
       RISKY_INVESTOR_PASSWORD_HASH_FILE: passwordHashFile,
       SESSION_SECRET_FILE: sessionSecretFile,
+      RISKY_INVESTOR_CREDENTIAL_ENCRYPTION_KEY:
+        "integration-test-credential-encryption-key-at-least-32-bytes",
       SESSION_TTL_HOURS: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -182,6 +184,82 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
       false,
     );
     assert.ok(initialDashboard.dailyPL);
+
+    const webhook =
+      "https://discord.com/api/webhooks/123456/integration-private-token";
+    response = await fetch(`${baseUrl}/api/discord-destinations`, {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ label: "Integration", webhook }),
+    });
+    assert.equal(response.status, 403);
+
+    response = await fetch(`${baseUrl}/api/discord-destinations`, {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders,
+        "content-type": "application/json",
+        "x-csrf-token": session.csrfToken,
+      },
+      body: JSON.stringify({
+        label: "Integration",
+        webhook,
+        enabled: true,
+        displayName: "Risky Investor",
+      }),
+    });
+    assert.equal(response.status, 201);
+    const destination = await json(response);
+    assert.equal(destination.label, "Integration");
+    assert.equal(destination.maskedEnding, "oken");
+    assert.equal(JSON.stringify(destination).includes(webhook), false);
+    assert.equal(
+      JSON.stringify(
+        JSON.parse(
+          await readFile(
+            path.join(privateData, "discord_destinations.json"),
+            "utf8",
+          ),
+        ),
+      ).includes(webhook),
+      false,
+    );
+
+    response = await fetch(
+      `${baseUrl}/api/discord-destinations/${destination.destinationId}`,
+      {
+        method: "PUT",
+        headers: {
+          ...authenticatedHeaders,
+          "content-type": "application/json",
+          "x-csrf-token": session.csrfToken,
+        },
+        body: JSON.stringify({ enabled: false }),
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await json(response)).enabled, false);
+
+    response = await fetch(
+      `${baseUrl}/api/discord-destinations/${destination.destinationId}/webhook`,
+      {
+        method: "PUT",
+        headers: {
+          ...authenticatedHeaders,
+          "content-type": "application/json",
+          "x-csrf-token": session.csrfToken,
+        },
+        body: JSON.stringify({
+          webhook:
+            "https://discordapp.com/api/webhooks/123456/replaced-private-token",
+        }),
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await json(response)).maskedEnding, "oken");
 
     const tradeInput = {
       strategyName: "UK Nasdaq SMA200",
@@ -644,6 +722,19 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
       ).manualTradeId,
       null,
     );
+
+    response = await fetch(
+      `${baseUrl}/api/discord-destinations/${destination.destinationId}`,
+      {
+        method: "DELETE",
+        headers: {
+          ...authenticatedHeaders,
+          "x-csrf-token": session.csrfToken,
+        },
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await json(response), { deleted: true });
 
     response = await fetch(`${baseUrl}/api/auth/logout`, {
       method: "POST",

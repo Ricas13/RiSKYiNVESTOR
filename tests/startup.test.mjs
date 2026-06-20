@@ -29,6 +29,7 @@ const runtimeFiles = [
   "cash_flows.json",
   "closed_trades.json",
   "daily_portfolio_snapshots.json",
+  "discord_destinations.json",
   "manual_trades.json",
   "model/closed_trades.json",
   "model/latest_summary.json",
@@ -70,7 +71,7 @@ async function availablePort() {
   return port;
 }
 
-function startServer(privateData, port, applicationRoot) {
+function startServer(privateData, port, applicationRoot, extraEnvironment = {}) {
   return spawn(process.execPath, [path.join(projectRoot, "dist-server/index.js")], {
     cwd: applicationRoot,
     env: {
@@ -83,6 +84,10 @@ function startServer(privateData, port, applicationRoot) {
       RISKY_INVESTOR_PASSWORD_HASH: passwordHash(password),
       SESSION_SECRET:
         "startup-test-session-secret-that-is-longer-than-thirty-two-characters",
+      RISKY_INVESTOR_CREDENTIAL_ENCRYPTION_KEY_FILE: "",
+      RISKY_INVESTOR_CREDENTIAL_ENCRYPTION_KEY:
+        "startup-test-credential-encryption-key-32-bytes-minimum",
+      ...extraEnvironment,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -182,6 +187,39 @@ async function loginAndLoadDashboard(baseUrl) {
   });
   return { response, dashboard: await response.json() };
 }
+
+test("production startup refuses missing or short credential encryption keys", async () => {
+  for (const supplied of ["", "too-short"]) {
+    const privateData = await mkdtemp(
+      path.join(os.tmpdir(), "risky-key-failure-"),
+    );
+    const applicationRoot = await mkdtemp(
+      path.join(os.tmpdir(), "risky-key-failure-app-"),
+    );
+    const port = await availablePort();
+    const child = startServer(privateData, port, applicationRoot, {
+      RISKY_INVESTOR_CREDENTIAL_ENCRYPTION_KEY: supplied,
+    });
+    const logs = capture(child);
+    try {
+      await waitForExit(child, 5_000);
+      assert.notEqual(child.exitCode, 0);
+      const output = logs.output();
+      assert.match(
+        `${output.stdout}\n${output.stderr}`,
+        /credential encryption key/i,
+      );
+      assert.doesNotMatch(
+        `${output.stdout}\n${output.stderr}`,
+        /too-short/,
+      );
+    } finally {
+      await stopServer(child);
+      await rm(privateData, { recursive: true, force: true });
+      await rm(applicationRoot, { recursive: true, force: true });
+    }
+  }
+});
 
 test("production startup supports an authenticated dashboard load from empty private data", async () => {
   const privateData = await mkdtemp(path.join(os.tmpdir(), "risky-empty-"));
