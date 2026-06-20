@@ -1,0 +1,55 @@
+.strategy-configuration fieldset {
+  border: 0;
+  display: grid;
+  gap: 1.2rem;
+  margin: 0;
+  padding: 0;
+}
+
+.strategy-config__header,
+.strategy-config__watchlist-heading {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  padding-top: 1.1rem;
+}
+
+.strategy-config__header h3,
+.strategy-config__watchlist-heading h4 {
+  margin: 0;
+}
+
+.strategy-config__header p,
+.strategy-config__watchlist-heading p {
+  color: var(--text-muted);
+  margin: 0.25rem 0 0;
+}
+
+.strategy-config__fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.strategy-config__watchlist input:not([type="checkbox"]) {
+  min-width: 8rem;
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .strategy-config__fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .strategy-config__header,
+  .strategy-config__watchlist-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+
+  .strategy-config__fields {
+    grid-template-columns: 1fr;
+  }
+}
