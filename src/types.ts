@@ -223,7 +223,7 @@ export type DataClassification =
   | "Mixed"
   | "Live"
   | "Empty"
-  | "Unknown — requires review";
+  | "Unknown \u2014 requires review";
 
 export interface DataAreaStatus {
   id: string;
@@ -308,6 +308,7 @@ export interface NotificationSettings {
   migration: {
     legacyScannerDiscordEnabled: boolean;
     canonicalDashboardDiscordEnabled: boolean;
+    legacyServerDiscordAlongsideManaged: boolean;
   };
   signalAlerts: {
     entry: boolean;
@@ -365,6 +366,8 @@ export interface NotificationDelivery {
   deliveryId: string;
   eventId: string | null;
   notificationKey: string;
+  destinationId?: string | null;
+  destinationLabel?: string | null;
   channel:
     | "dashboard"
     | "discord"
@@ -390,6 +393,8 @@ export interface NotificationPublicState {
       maskedEnding: string | null;
       lastSuccessfulDeliveryAt: string | null;
       latestResult: NotificationDeliveryStatus | null;
+      destinations: DiscordDestination[];
+      legacyDestination: DiscordDestination | null;
     };
     whatsapp: {
       configured: boolean;
@@ -401,6 +406,22 @@ export interface NotificationPublicState {
   };
   retention: { retained: number; maximum: number };
   deliveries: NotificationDelivery[];
+}
+
+export interface DiscordDestination {
+  destinationId: string;
+  label: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastTestAt: string | null;
+  lastSuccessfulDeliveryAt: string | null;
+  latestResult: NotificationDeliveryStatus | null;
+  maskedEnding: string;
+  legacy: boolean;
+  editable: boolean;
 }
 
 export interface DailyPLReport {
