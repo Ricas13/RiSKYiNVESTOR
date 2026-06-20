@@ -16,6 +16,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 const emptyTrade = {
   strategyName: "Baseline Adaptive SuperTrend",
+  sleeve: "Discretionary / untagged",
   assetName: "",
   ticker: "",
   direction: "long",
@@ -103,6 +104,7 @@ export function ManualTrades({
     setEditingId(trade.id);
     setForm({
       strategyName: trade.strategyName,
+      sleeve: trade.sleeve ?? "Discretionary / untagged",
       assetName: trade.assetName,
       ticker: trade.ticker,
       direction: trade.direction,
@@ -251,6 +253,17 @@ export function ManualTrades({
               {strategies.map((strategy) => (
                 <option key={strategy.id}>{strategy.name}</option>
               ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Actual trade sleeve</span>
+            <select
+              value={form.sleeve}
+              onChange={(event) => updateField("sleeve", event.target.value)}
+            >
+              <option>SuperTrend</option>
+              <option>SMA200 Regime</option>
+              <option>Discretionary / untagged</option>
             </select>
           </label>
           <label className="field">
@@ -724,6 +737,10 @@ function TradeTable({
                 <tr key={trade.id}>
                   <td data-label="Trade">
                     <strong className="table-primary">{trade.assetName}</strong>
+                    <span className="table-secondary">
+                      Actual manually entered trade ·{" "}
+                      {trade.sleeve ?? "Discretionary / untagged"}
+                    </span>
                     <span className="table-secondary">
                       {trade.ticker} · {trade.strategyName}
                     </span>
