@@ -10,8 +10,8 @@
     "start": "node dist-server/index.js",
     "preview": "npm run build && npm run start",
     "lint": "eslint .",
-    "test": "tsc -b && vite build && tsc -p tsconfig.server.json && node --test tests/startup.test.mjs tests/server.integration.test.mjs tests/store.test.mjs tests/signal-events.test.mjs tests/notifications.test.mjs tests/data-cleanup.test.mjs tests/appearance.test.mjs",
-    "test:server": "node --test tests/startup.test.mjs tests/server.integration.test.mjs tests/store.test.mjs tests/signal-events.test.mjs tests/notifications.test.mjs tests/data-cleanup.test.mjs tests/appearance.test.mjs",
+    "test": "tsc -b && vite build && tsc -p tsconfig.server.json && node --test tests/startup.test.mjs tests/server.integration.test.mjs tests/store.test.mjs tests/signal-events.test.mjs tests/notifications.test.mjs tests/data-cleanup.test.mjs tests/appearance.test.mjs tests/multi-strategy.test.mjs",
+    "test:server": "node --test tests/startup.test.mjs tests/server.integration.test.mjs tests/store.test.mjs tests/signal-events.test.mjs tests/notifications.test.mjs tests/data-cleanup.test.mjs tests/appearance.test.mjs tests/multi-strategy.test.mjs",
     "test:startup": "node --test tests/startup.test.mjs",
     "hash-password": "tsx scripts/hash-password.ts"
   },
