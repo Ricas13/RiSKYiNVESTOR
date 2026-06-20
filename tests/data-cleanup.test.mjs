@@ -165,6 +165,85 @@ test("mixed data removes only explicit demo records and preserves genuine owner 
   }
 });
 
+test("generic unmarked IDs survive while only a complete shipped fixture fingerprint is removed", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "risky-generic-id-cleanup-"));
+  try {
+    const store = await emptyStore(root);
+    const shippedGoldFixture = {
+      id: "gold",
+      assetName: "Gold",
+      category: "Commodity",
+      entryTicker: "GC=F",
+      tradeTicker: "3GLD.L",
+      riskTier: "CORE",
+      currentTrend: "Green",
+      latestClose: 245.62,
+      currency: "GBP",
+      superTrendValue: 232.18,
+      lastSignalDate: "2026-05-12",
+      liquidityStatus: "Good",
+      allocationRule: "Normal allocation",
+      notes: "Futures close used for the underlying signal.",
+    };
+    const genericRecords = [
+      {
+        ...shippedGoldFixture,
+        notes: "Live scanner record using the same reusable ID.",
+      },
+      {
+        id: "nvidia",
+        assetName: "NVIDIA live",
+        entryTicker: "NVDA",
+        tradeTicker: "NVD3.L",
+        currentTrend: "Red",
+        source: "future-scanner-run",
+      },
+      {
+        id: "nasdaq-100",
+        assetName: "Nasdaq 100 live",
+        entryTicker: "NDX",
+        tradeTicker: "QQQ3.L",
+        currentTrend: "Green",
+        source: "future-scanner-run",
+      },
+    ];
+    await Promise.all([
+      store.write("manual_trades.json", {
+        isExample: false,
+        trades: [
+          {
+            id: "cleanup-trigger",
+            isDemo: true,
+            quantity: 1,
+            exits: [],
+          },
+        ],
+      }),
+      store.write("model/watchlist_status.json", [
+        shippedGoldFixture,
+        ...genericRecords,
+      ]),
+    ]);
+
+    const before = await buildDataStatusReport(store, account);
+    const watchlistArea = before.areas.find(
+      (area) => area.id === "watchlist-status",
+    );
+    assert.equal(watchlistArea?.classification, "Mixed");
+    assert.equal(watchlistArea?.demoCount, 1);
+    assert.equal(watchlistArea?.unknownCount, 3);
+
+    await cleanupDemoData(store, account);
+
+    assert.deepEqual(
+      await store.read("model/watchlist_status.json"),
+      genericRecords,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("unknown historical data is surfaced for review and never removed", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "risky-unknown-cleanup-"));
   try {
@@ -187,7 +266,7 @@ test("unknown historical data is surfaced for review and never removed", async (
     assert.equal(
       report.areas.find((area) => area.id === "model-performance")
         ?.classification,
-      "Unknown — requires review",
+      "Unknown \u2014 requires review",
     );
     const result = await cleanupDemoData(store, account);
     assert.equal(result.cleaned, false);
@@ -330,6 +409,8 @@ async function startServer(privateData, role) {
       RISKY_INVESTOR_ROLE: role,
       SESSION_SECRET:
         "cleanup-integration-session-secret-longer-than-thirty-two-characters",
+      RISKY_INVESTOR_CREDENTIAL_ENCRYPTION_KEY:
+        "cleanup-test-credential-encryption-key-at-least-32-bytes",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -388,6 +469,23 @@ test("cleanup routes enforce authentication, role, CSRF, preview, backup, and ty
       },
       body: JSON.stringify({ confirmation: "REMOVE DEMO DATA" }),
     });
+    assert.equal(response.status, 403);
+    response = await fetch(
+      `${userServer.baseUrl}/api/discord-destinations`,
+      {
+        method: "POST",
+        headers: {
+          cookie: user.cookie,
+          "content-type": "application/json",
+          "x-csrf-token": user.session.csrfToken,
+        },
+        body: JSON.stringify({
+          label: "Blocked",
+          webhook:
+            "https://discord.com/api/webhooks/123456/blocked-token",
+        }),
+      },
+    );
     assert.equal(response.status, 403);
 
     const owner = await login(ownerServer);
