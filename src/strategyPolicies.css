@@ -1,0 +1,43 @@
+.strategy-policy,
+.strategy-policy__group {
+  display: grid;
+  gap: 1rem;
+}
+
+.strategy-policy__group {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.strategy-policy__group h3 {
+  margin: 0;
+}
+
+.strategy-policy__table {
+  border-collapse: collapse;
+  min-width: 48rem;
+  width: 100%;
+}
+
+.strategy-policy__table th,
+.strategy-policy__table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem;
+  text-align: center;
+}
+
+.strategy-policy__table th:first-child {
+  text-align: left;
+}
+
+.strategy-policy__table th small {
+  color: var(--text-muted);
+  display: block;
+  font-weight: 500;
+  margin-top: 0.2rem;
+}
+
+.strategy-policy__table input {
+  height: 1.1rem;
+  width: 1.1rem;
+}
