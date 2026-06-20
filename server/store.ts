@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  currentDashboardAppearance,
+  normaliseDashboardAppearance,
+  withDashboardAppearance,
+} from "./dashboardAppearance.js";
 
 export class JsonStore {
   constructor(private readonly root: string) {}
@@ -31,6 +36,41 @@ export class JsonStore {
         `Invalid JSON in private data file "${relativePath}". The file was not modified.`,
       );
     }
+  }
+
+  private async prepareValue<T>(relativePath: string, value: T): Promise<T> {
+    if (
+      relativePath !== "settings.json" ||
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value)
+    ) {
+      return value;
+    }
+    const record = value as Record<string, unknown>;
+    let appearance = currentDashboardAppearance() ?? record.appearance;
+    if (appearance === undefined) {
+      try {
+        const existing = this.parse<Record<string, unknown>>(
+          relativePath,
+          await readFile(this.resolve(relativePath), "utf8"),
+        );
+        appearance = existing.appearance;
+      } catch (error) {
+        if (
+          !error ||
+          typeof error !== "object" ||
+          !("code" in error) ||
+          error.code !== "ENOENT"
+        ) {
+          throw error;
+        }
+      }
+    }
+    return {
+      ...record,
+      appearance: normaliseDashboardAppearance(appearance),
+    } as T;
   }
 
   async ensure<T>(relativePath: string, initialValue: T) {
@@ -71,7 +111,21 @@ export class JsonStore {
   }
 
   async read<T>(relativePath: string): Promise<T> {
-    return this.parse(relativePath, await readFile(this.resolve(relativePath), "utf8"));
+    const value = this.parse<T>(
+      relativePath,
+      await readFile(this.resolve(relativePath), "utf8"),
+    );
+    if (
+      relativePath === "settings.json" &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      return withDashboardAppearance(
+        value as Record<string, unknown>,
+      ) as T;
+    }
+    return value;
   }
 
   async readOptional<T>(relativePath: string): Promise<T | null> {
@@ -93,9 +147,10 @@ export class JsonStore {
   async write<T>(relativePath: string, value: T) {
     const target = this.resolve(relativePath);
     const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+    const prepared = await this.prepareValue(relativePath, value);
     await mkdir(path.dirname(target), { recursive: true });
     try {
-      await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+      await writeFile(temporary, `${JSON.stringify(prepared, null, 2)}\n`, {
         encoding: "utf8",
         flag: "wx",
       });
@@ -110,8 +165,9 @@ export class JsonStore {
       entries.map(async ({ relativePath, value }) => {
         const target = this.resolve(relativePath);
         const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+        const prepared = await this.prepareValue(relativePath, value);
         await mkdir(path.dirname(target), { recursive: true });
-        await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+        await writeFile(temporary, `${JSON.stringify(prepared, null, 2)}\n`, {
           encoding: "utf8",
           flag: "wx",
         });
