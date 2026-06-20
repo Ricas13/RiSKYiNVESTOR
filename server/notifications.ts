@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   DiscordDestinationManager,
   type DiscordDeliveryTarget,
+  type DiscordNotificationCategory,
 } from "./discordDestinations.js";
 import {
   applyWebhookIdentity,
@@ -196,6 +197,17 @@ function toggleFor(eventType: SignalState, settings: NotificationSettings) {
   return false;
 }
 
+function destinationCategoryFor(
+  eventType: SignalState,
+): DiscordNotificationCategory | null {
+  if (eventType === "actionable_entry") return "entry";
+  if (eventType === "actionable_exit") return "exit";
+  if (eventType === "low_liquidity_warning") return "lowLiquidity";
+  if (eventType === "scanner_error") return "scannerError";
+  if (eventType === "watchlist_only") return "watchlistOnly";
+  return null;
+}
+
 function money(value: number | null) {
   if (value === null) return "unavailable";
   return new Intl.NumberFormat("en-GB", {
@@ -313,11 +325,11 @@ function signalMessage(event: SignalEvent) {
         ? "ACTIONABLE EXIT"
         : event.signalState.replaceAll("_", " ").toUpperCase();
   return [
-    `Risky Investor \u00b7 ${heading}`,
-    `${event.underlyingTicker} \u2192 ${event.tradeTicker}`,
+    `Risky Investor - ${heading}`,
+    `${event.underlyingTicker} -> ${event.tradeTicker}`,
     event.reasonText,
-    `Trend: ${event.previousTrend} \u2192 ${event.currentTrend}`,
-    `Tier: ${event.riskTier} \u00b7 Eligibility: ${event.eligibility}`,
+    `Trend: ${event.previousTrend} -> ${event.currentTrend}`,
+    `Tier: ${event.riskTier} - Eligibility: ${event.eligibility}`,
     `Allocation: ${event.allocationPercent}% (${event.allocationStatus})`,
     `Occurred: ${event.occurredAt}`,
     `Event: ${event.eventId}`,
@@ -503,18 +515,22 @@ export class NotificationDispatcher {
         retryCount: 0,
       });
     }
+    const destinationCategory = destinationCategoryFor(event.signalState);
+    if (!destinationCategory) return null;
     const targets = await this.destinations.deliveryTargets(
+      destinationCategory,
       settings.migration.legacyServerDiscordAlongsideManaged,
     );
     if (!targets.length) {
       return this.recordFinal({
-        notificationKey: `discord:signal:${event.eventId}:unconfigured`,
+        notificationKey: `discord:signal:${event.eventId}:no-subscribed-destination`,
         eventId: event.eventId,
         channel: "discord",
         category: "signal",
-        status: "disabled",
+        status: "skipped",
         message,
-        errorMessage: "Discord destination is not configured or enabled.",
+        errorMessage:
+          "No enabled Discord destination is subscribed to this notification category.",
         retryCount: 0,
       });
     }
@@ -544,7 +560,7 @@ export class NotificationDispatcher {
   }
 
   async testDiscord(destinationId?: string, dryRun = false) {
-    const message = "Risky Investor notification test \u2014 no trading action.";
+    const message = "Risky Investor notification test - no trading action.";
     if (dryRun) {
       return {
         status: "skipped" as const,
@@ -554,8 +570,29 @@ export class NotificationDispatcher {
     }
     if (!destinationId) {
       const settings = await this.settings();
+      if (
+        !settings.migration.canonicalDashboardDiscordEnabled ||
+        !settings.discord.enabled
+      ) {
+        const reason = !settings.migration.canonicalDashboardDiscordEnabled
+          ? "Canonical dashboard Discord is disabled."
+          : "Discord notifications are disabled.";
+        const delivery = await this.recordFinal({
+          notificationKey: `discord:test:disabled:${randomUUID()}`,
+          eventId: null,
+          channel: "discord",
+          category: "test",
+          status: "disabled",
+          message,
+          errorMessage:
+            `${reason} Discord destination is not configured or enabled.`,
+          retryCount: 0,
+        });
+        return { status: delivery.status, preview: message, delivery };
+      }
       destinationId = (
         await this.destinations.deliveryTargets(
+          null,
           settings.migration.legacyServerDiscordAlongsideManaged,
         )
       )[0]?.destinationId;
@@ -595,7 +632,7 @@ export class NotificationDispatcher {
   ) {
     const snapshot = context.snapshot;
     const localDate = zonedClock(now, settings.dailySummary.timezone).date;
-    const lines = [`Risky Investor daily P/L summary \u00b7 ${localDate}`];
+    const lines = [`Risky Investor daily P/L summary - ${localDate}`];
     const metrics = settings.dailySummary.metrics;
     if (!snapshot) {
       lines.push("Portfolio snapshot: unavailable.");
@@ -620,7 +657,7 @@ export class NotificationDispatcher {
       }
       if (metrics.contributionsWithdrawals) {
         lines.push(
-          `Contributions: ${money(snapshot.contributions)} \u00b7 withdrawals: ${money(snapshot.withdrawals)}.`,
+          `Contributions: ${money(snapshot.contributions)} - withdrawals: ${money(snapshot.withdrawals)}.`,
         );
       }
       if (metrics.drawdown) {
@@ -628,7 +665,7 @@ export class NotificationDispatcher {
       }
       if (metrics.cashInvested) {
         lines.push(
-          `Cash: ${money(snapshot.cashValue)} \u00b7 invested: ${money(snapshot.investedValue)}.`,
+          `Cash: ${money(snapshot.cashValue)} - invested: ${money(snapshot.investedValue)}.`,
         );
       }
     }
@@ -636,7 +673,7 @@ export class NotificationDispatcher {
       const event = context.latestActionableEvent;
       lines.push(
         event
-          ? `Latest actionable signal: ${event.signalState} ${event.tradeTicker} \u00b7 ${event.reasonText}`
+          ? `Latest actionable signal: ${event.signalState} ${event.tradeTicker} - ${event.reasonText}`
           : "Latest actionable signal: none.",
       );
     }
@@ -644,7 +681,7 @@ export class NotificationDispatcher {
       lines.push(
         `Scanner status: ${context.scanner.status}` +
           (context.scanner.lastSuccessfulScanAt
-            ? ` \u00b7 last success ${context.scanner.lastSuccessfulScanAt}`
+            ? ` - last success ${context.scanner.lastSuccessfulScanAt}`
             : ""),
       );
     }
@@ -781,17 +818,19 @@ export class NotificationDispatcher {
     }
 
     const targets = await this.destinations.deliveryTargets(
+      "dailySummary",
       settings.migration.legacyServerDiscordAlongsideManaged,
     );
     if (!targets.length) {
       const delivery = await this.recordFinal({
-        notificationKey: `${baseNotificationKey}:unconfigured`,
+        notificationKey: `${baseNotificationKey}:no-subscribed-destination`,
         eventId: snapshot!.snapshotId,
         channel: "daily_summary",
         category: "daily_summary",
-        status: "disabled",
+        status: "skipped",
         message: rendered.message,
-        errorMessage: "Discord destination is not configured or enabled.",
+        errorMessage:
+          "No enabled Discord destination is subscribed to daily summaries.",
         retryCount: 0,
       });
       return {

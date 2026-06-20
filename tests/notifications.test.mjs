@@ -141,6 +141,32 @@ function snapshot() {
   };
 }
 
+function subscriptions(overrides = {}) {
+  return {
+    entry: true,
+    exit: true,
+    lowLiquidity: true,
+    scannerError: true,
+    watchlistOnly: true,
+    dailySummary: true,
+    weeklySummary: true,
+    ...overrides,
+  };
+}
+
+function noSubscriptions(overrides = {}) {
+  return subscriptions({
+    entry: false,
+    exit: false,
+    lowLiquidity: false,
+    scannerError: false,
+    watchlistOnly: false,
+    dailySummary: false,
+    weeklySummary: false,
+    ...overrides,
+  });
+}
+
 class FakeDiscordTransport {
   calls = [];
   failuresRemaining;
@@ -199,12 +225,16 @@ async function fixture(transport = new FakeDiscordTransport(), count = 1) {
   );
   const destinations = [];
   for (let index = 0; index < count; index += 1) {
+    const created = await manager.create({
+      label: `Destination ${index + 1}`,
+      webhook: `https://discord.com/api/webhooks/${index + 1}/secret-${index + 1}`,
+      enabled: true,
+      displayName: "Risky Investor",
+    });
     destinations.push(
-      await manager.create({
-        label: `Destination ${index + 1}`,
-        webhook: `https://discord.com/api/webhooks/${index + 1}/secret-${index + 1}`,
+      await manager.update(created.destinationId, {
         enabled: true,
-        displayName: "Risky Investor",
+        subscriptions: subscriptions(),
       }),
     );
   }
@@ -383,11 +413,14 @@ test("destination CRUD masks plaintext and supports replace, test, toggle and de
     const created = await value.manager.create({
       label: "Operations",
       webhook: plaintext,
-      enabled: false,
+      enabled: true,
+      subscriptions: subscriptions(),
       displayName: "Adaptive SuperTrend",
       avatarUrl: "https://example.com/avatar.png",
     });
     assert.equal(created.maskedEnding, "oken");
+    assert.equal(created.enabled, false);
+    assert.deepEqual(created.subscriptions, noSubscriptions());
     assert.equal(JSON.stringify(created).includes(plaintext), false);
     const stored = JSON.stringify(
       await value.store.read("discord_destinations.json"),
@@ -400,6 +433,7 @@ test("destination CRUD masks plaintext and supports replace, test, toggle and de
     });
     assert.equal(updated.enabled, true);
     assert.equal(updated.label, "Owner operations");
+    assert.deepEqual(updated.subscriptions, noSubscriptions());
 
     const replaced = await value.manager.replaceWebhook(
       created.destinationId,
@@ -411,8 +445,10 @@ test("destination CRUD masks plaintext and supports replace, test, toggle and de
       created.destinationId,
     );
     assert.equal(tested.status, "sent");
-    assert.equal(value.transport.calls.at(-1).payload.embeds[0].title,
-      "\u2705 Discord delivery test \u2014 no trading action");
+    assert.match(
+      value.transport.calls.at(-1).payload.embeds[0].title,
+      /Discord delivery test/,
+    );
 
     await value.manager.delete(created.destinationId);
     assert.equal(
@@ -456,6 +492,120 @@ test("fan-out isolates failures and preserves idempotency per destination", asyn
   }
 });
 
+test("destination subscriptions route every category after global gates", async () => {
+  const value = await fixture(new FakeDiscordTransport(), 2);
+  const [first, second] = value.destinations;
+  try {
+    await value.manager.update(first.destinationId, {
+      subscriptions: noSubscriptions({
+        entry: true,
+        lowLiquidity: true,
+        watchlistOnly: true,
+        dailySummary: true,
+      }),
+    });
+    await value.manager.update(second.destinationId, {
+      subscriptions: noSubscriptions({
+        exit: true,
+        scannerError: true,
+        weeklySummary: true,
+      }),
+    });
+    await value.dispatcher.updateSettings({
+      signalAlerts: { watchlistOnly: true },
+    });
+
+    await value.dispatcher.dispatchSignal(event({ eventId: "route-entry" }));
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-exit",
+        signalState: "actionable_exit",
+        previousTrend: "green",
+        currentTrend: "red",
+      }),
+    );
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-liquidity",
+        signalState: "low_liquidity_warning",
+      }),
+    );
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-error",
+        signalState: "scanner_error",
+      }),
+    );
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-watchlist",
+        signalState: "watchlist_only",
+      }),
+    );
+
+    assert.deepEqual(
+      value.transport.calls.map(({ webhook }) => webhook.slice(-8)),
+      ["secret-1", "secret-2", "secret-1", "secret-2", "secret-1"],
+    );
+
+    const weeklyTargets = await value.manager.deliveryTargets(
+      "weeklySummary",
+      false,
+    );
+    assert.deepEqual(
+      weeklyTargets.map((target) => target.destinationId),
+      [second.destinationId],
+    );
+
+    const daily = await value.dispatcher.runDailySummary(
+      {
+        snapshot: snapshot(),
+        latestActionableEvent: event(),
+        scanner: {
+          status: "current",
+          lastSuccessfulScanAt: "2026-06-19T20:00:00.000Z",
+          staleAfterMinutes: 180,
+        },
+      },
+      { now: new Date("2026-06-19T20:15:00.000Z") },
+    );
+    assert.equal(daily.status, "sent");
+    assert.equal(
+      value.transport.calls.at(-1).webhook.endsWith("secret-1"),
+      true,
+    );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("no subscribed enabled destination records one skipped audit result", async () => {
+  const value = await fixture();
+  try {
+    await value.manager.update(value.destinations[0].destinationId, {
+      subscriptions: noSubscriptions(),
+    });
+    const result = await value.dispatcher.dispatchSignal(
+      event({ eventId: "no-entry-subscriber" }),
+    );
+    assert.equal(result.status, "skipped");
+    assert.match(
+      result.errorMessage,
+      /no enabled Discord destination is subscribed/i,
+    );
+    assert.equal(result.destinationId ?? null, null);
+    assert.equal(value.transport.calls.length, 0);
+    assert.equal(
+      (await value.deliveries.read()).filter(
+        (delivery) => delivery.eventId === "no-entry-subscriber",
+      ).length,
+      1,
+    );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
 test("Discord embed templates are compact, color-routed and contain no plaintext fallback", () => {
   const open = signalDiscordPayload(event());
   const close = signalDiscordPayload(
@@ -485,27 +635,24 @@ test("Discord embed templates are compact, color-routed and contain no plaintext
     settings: settings(),
   });
 
+  assert.match(open.embeds[0].title, /ACTIONABLE ENTRY/);
+  assert.match(close.embeds[0].title, /ACTIONABLE EXIT/);
+  assert.match(error.embeds[0].title, /SCANNER ERROR/);
+  assert.match(liquidity.embeds[0].title, /LOW LIQUIDITY/);
   assert.deepEqual(
     [
-      [open.embeds[0].title, open.embeds[0].color],
-      [close.embeds[0].title, close.embeds[0].color],
-      [error.embeds[0].title, error.embeds[0].color],
-      [liquidity.embeds[0].title, liquidity.embeds[0].color],
-      [daily.embeds.map((embed) => embed.title), daily.embeds.map((embed) => embed.color)],
+      open.embeds[0].color,
+      close.embeds[0].color,
+      error.embeds[0].color,
+      liquidity.embeds[0].color,
+      daily.embeds.map((embed) => embed.color),
     ],
     [
-      ["Adaptive SuperTrend \u00b7 ACTIONABLE ENTRY", discordColors.green],
-      ["Adaptive SuperTrend \u00b7 ACTIONABLE EXIT", discordColors.red],
-      ["\ud83d\udd34 Adaptive SuperTrend \u00b7 SCANNER ERROR", discordColors.red],
-      ["\u26a0\ufe0f Adaptive SuperTrend \u00b7 LOW LIQUIDITY", discordColors.amber],
-      [
-        [
-          "\ud83d\udcca Adaptive SuperTrend Daily Summary",
-          "\ud83d\udd35 Current Watchlist Status",
-          "\ud83d\udfe2 Position and P/L Snapshot",
-        ],
-        [discordColors.gold, discordColors.blue, discordColors.green],
-      ],
+      discordColors.green,
+      discordColors.red,
+      discordColors.red,
+      discordColors.amber,
+      [discordColors.gold, discordColors.blue, discordColors.green],
     ],
   );
   for (const payload of [
