@@ -606,6 +606,83 @@ test("no subscribed enabled destination records one skipped audit result", async
   }
 });
 
+test("integrated strategy events default to website history only", async () => {
+  const value = await fixture();
+  try {
+    const result = await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "supertrend-muted",
+        strategyId: "daily-supertrend",
+        strategyName: "Daily SuperTrend",
+        source: "integrated_python_scanner",
+      }),
+    );
+    assert.equal(result.status, "skipped");
+    assert.match(result.errorMessage, /website history only/i);
+    assert.equal(value.transport.calls.length, 0);
+    assert.equal(
+      (await value.deliveries.read()).some(
+        (delivery) => delivery.eventId === "supertrend-muted",
+      ),
+      true,
+    );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("strategy-specific policies isolate Discord routing and deduplicate per destination", async () => {
+  const value = await fixture(new FakeDiscordTransport(), 2);
+  const [superTrendDestination, smaDestination] = value.destinations;
+  try {
+    await value.dispatcher.updateSettings({
+      strategyPolicies: {
+        "daily-supertrend": {
+          entry: [superTrendDestination.destinationId],
+        },
+        "nasdaq-sma200-3x": {
+          entry: [smaDestination.destinationId],
+        },
+      },
+    });
+
+    const superTrendEvent = event({
+      eventId: "supertrend-entry-routed",
+      strategyId: "daily-supertrend",
+      strategyName: "Daily SuperTrend",
+      source: "integrated_python_scanner",
+    });
+    const smaEvent = event({
+      eventId: "sma-entry-routed",
+      strategyId: "nasdaq-sma200-3x",
+      strategyName: "Nasdaq SMA200 Regime — 3x",
+      source: "integrated_python_scanner",
+    });
+
+    await value.dispatcher.dispatchSignal(superTrendEvent);
+    await value.dispatcher.dispatchSignal(smaEvent);
+    await value.dispatcher.dispatchSignal(superTrendEvent);
+    await value.dispatcher.dispatchSignal(smaEvent);
+
+    assert.deepEqual(
+      value.transport.calls.map(({ webhook }) => webhook.slice(-8)),
+      ["secret-1", "secret-2"],
+    );
+    const history = await value.deliveries.read();
+    assert.equal(
+      history.filter((delivery) => delivery.eventId === superTrendEvent.eventId)
+        .length,
+      1,
+    );
+    assert.equal(
+      history.filter((delivery) => delivery.eventId === smaEvent.eventId).length,
+      1,
+    );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
 test("Discord embed templates are compact, color-routed and contain no plaintext fallback", () => {
   const open = signalDiscordPayload(event());
   const close = signalDiscordPayload(
@@ -667,4 +744,4 @@ test("Discord embed templates are compact, color-routed and contain no plaintext
     assert.equal(validateDiscordPayload(payload), payload);
     assert.ok(JSON.stringify(payload).length < 20_000);
   }
-});
+}
