@@ -215,7 +215,139 @@ export interface DashboardData {
   dailyPL: DailyPLReport;
   latestPortfolioSnapshot: DailyPortfolioSnapshot | null;
   scannerImport: ScannerImportState;
+  strategyMonitor: MultiStrategyPublicState;
+  strategyConfiguration: StrategyConfiguration;
   dataStatus: DataStatusReport;
+}
+
+export type StrategyId = "daily-supertrend" | "nasdaq-sma200-3x";
+export type StrategyEventType =
+  | "entry"
+  | "exit"
+  | "lowLiquidity"
+  | "stateUpdate"
+  | "dailySummary"
+  | "weeklySummary"
+  | "scannerError";
+
+export interface StrategyConfiguration {
+  version: 1;
+  marketData: {
+    provider: "stooq_csv" | "url_template_csv";
+    urlTemplate: string;
+    timeoutSeconds: number;
+    maximumRetries: number;
+  };
+  strategies: {
+    dailySuperTrend: {
+      enabled: boolean;
+      timeframe: string;
+      atrPeriod: number;
+      multiplier: number;
+      modelStartingCapital: number;
+      allocationPolicy: "equal_weight" | "weighted";
+      maximumConcurrentPositions: number;
+      transactionCostPercent: number;
+      watchlist: Array<{
+        signalTicker: string;
+        executionTicker: string;
+        enabled: boolean;
+        allocationWeight: number;
+      }>;
+    };
+    nasdaqSma200: {
+      enabled: boolean;
+      referenceTicker: string;
+      riskOnTicker: string;
+      riskOffMode: "cash" | "instrument";
+      riskOffTicker: string;
+      smaLength: number;
+      reviewCadence: "daily" | "weekly";
+      riskOnThresholdPercent: number;
+      riskOffThresholdPercent: number;
+      modelStartingCapital: number;
+      transactionCostPercent: number;
+      annualInstrumentCostPercent: number;
+    };
+  };
+}
+
+export interface MultiStrategyEvent {
+  eventId: string;
+  strategyId: StrategyId;
+  eventType: StrategyEventType;
+  occurredAt: string;
+  signalTicker: string;
+  executionTicker: string;
+  reason: string;
+}
+
+export interface MultiStrategyPosition {
+  positionId: string;
+  label: "Virtual model position";
+  signalTicker: string;
+  executionTicker: string;
+  state: string;
+  entryTimestamp: string | null;
+  entryPrice: number | null;
+  latestPrice: number | null;
+  quantity: number;
+  allocation: number;
+  openPnlValue: number;
+  openPnlPercent: number;
+  daysHeld: number;
+  latestSignal: string;
+  reason: string;
+}
+
+export interface MultiStrategyRecord {
+  strategyId: StrategyId;
+  name: string;
+  enabled: boolean;
+  configured: boolean;
+  status: string;
+  ruleSummary: string;
+  parameters: Record<string, unknown>;
+  currentState: string;
+  modelValue: number | null;
+  returnPercent: number | null;
+  drawdownPercent: number | null;
+  exposurePercent: number;
+  cash?: number;
+  investedValue?: number;
+  regimeStartDate?: string | null;
+  referenceTicker?: string;
+  executionTicker?: string;
+  equitySnapshots: Array<{ date: string; value: number }>;
+  virtualPositions: MultiStrategyPosition[];
+  closedVirtualTrades: Array<Record<string, unknown>>;
+  events: MultiStrategyEvent[];
+  regimeChangeEvents?: MultiStrategyEvent[];
+  latestEvent: MultiStrategyEvent | null;
+  dataFreshness: string | null;
+}
+
+export interface MultiStrategySnapshot {
+  schemaVersion: "multi_strategy_v1";
+  generatedAt: string;
+  scanner: {
+    name: string;
+    version: string;
+    status: string;
+    errors: Array<{ strategyId?: string; message: string }>;
+    dataFreshness: {
+      generatedAt: string;
+      staleAfterMinutes: number;
+    } | null;
+  };
+  strategies: MultiStrategyRecord[];
+}
+
+export interface MultiStrategyPublicState {
+  source: "current" | "last_known_good" | "awaiting";
+  currentFileValid: boolean;
+  lastError: string | null;
+  snapshot: MultiStrategySnapshot | null;
 }
 
 export type DataClassification =
@@ -223,7 +355,7 @@ export type DataClassification =
   | "Mixed"
   | "Live"
   | "Empty"
-  | "Unknown \u2014 requires review";
+  | "Unknown — requires review";
 
 export interface DataAreaStatus {
   id: string;
@@ -319,6 +451,10 @@ export interface NotificationSettings {
     dailySummary: boolean;
     weeklySummary: boolean;
   };
+  strategyPolicies: Record<
+    StrategyId,
+    Record<StrategyEventType, string[]>
+  >;
   dailySummary: {
     enabled: boolean;
     time: string;
@@ -488,6 +624,7 @@ export interface TradeExit {
 export interface ManualTrade {
   id: string;
   strategyName: string;
+  sleeve?: "SuperTrend" | "SMA200 Regime" | "Discretionary / untagged";
   assetName: string;
   ticker: string;
   direction: "long" | "cash" | "other";
