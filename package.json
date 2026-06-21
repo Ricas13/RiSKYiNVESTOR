@@ -3,14 +3,14 @@
   "private": true,
   "version": "2.1.0",
   "type": "module",
-  "packageManager": "pnpm@10.12.1",
+  "packageManager": "pnmp@10.12.1",
   "scripts": {
     "dev": "concurrently -k -n web,server \"vite\" \"tsx watch server/index.ts\"",
     "build": "tsc -b && vite build && tsc -p tsconfig.server.json",
     "start": "node dist-server/index.js",
     "preview": "npm run build && npm run start",
     "lint": "eslint .",
-    "test": "tsc -b && vite build && tsc -p tsconfig.server.json && node --test tests/startup.test.mjs tests/server.integration.test.mjs tests/store.test.mjs tests/signal-events.test.mjs tests/notifications.test.mjs tests/data-cleanup.test.mjs tests/appearance.test.mjs tests/multi-strategy.test.mjs",
+    "test": "tsc -b && vite build && tsc -p tsconfig.server.json && node --import tsx --test tests/signal-monitor-ui.test.tsx && node --test tests/startup.test.mjs tests/server.integration.test.mjs tests/store.test.mjs tests/signal-events.test.mjs tests/notifications.test.mjs tests/data-cleanup.test.mjs tests/appearance.test.mjs tests/multi-strategy.test.mjs",
     "test:server": "node --test tests/startup.test.mjs tests/server.integration.test.mjs tests/store.test.mjs tests/signal-events.test.mjs tests/notifications.test.mjs tests/data-cleanup.test.mjs tests/appearance.test.mjs tests/multi-strategy.test.mjs",
     "test:startup": "node --test tests/startup.test.mjs",
     "hash-password": "tsx scripts/hash-password.ts"

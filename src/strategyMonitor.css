@@ -147,6 +147,65 @@
   white-space: pre-wrap;
 }
 
+.signal-monitor-board {
+  display: grid;
+  gap: 1rem;
+}
+
+.signal-monitor-summary {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.signal-monitor-table-wrap {
+  margin-top: 1rem;
+}
+
+.signal-monitor-table th,
+.signal-monitor-table td {
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.signal-monitor-table td:nth-child(3),
+.signal-monitor-table td:nth-child(4) {
+  white-space: normal;
+}
+
+.signal-monitor-table td small {
+  color: var(--text-muted);
+  display: block;
+  margin-top: 0.3rem;
+}
+
+.signal-monitor-empty {
+  margin-top: 1rem;
+}
+
+.signal-monitor-sma__grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 1rem 0 0;
+}
+
+.signal-monitor-sma__grid div {
+  background: var(--panel-muted);
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  padding: 0.85rem;
+}
+
+.signal-monitor-sma__grid dt {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-bottom: 0.35rem;
+}
+
+.signal-monitor-sma__grid dd {
+  font-weight: 800;
+  margin: 0;
+}
+
 @media (max-width: 900px) {
   .strategy-monitor__metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -154,6 +213,11 @@
 
   .strategy-monitor__grid {
     grid-template-columns: 1fr;
+  }
+
+  .signal-monitor-summary,
+  .signal-monitor-sma__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -165,6 +229,11 @@
   }
 
   .strategy-monitor__metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .signal-monitor-summary,
+  .signal-monitor-sma__grid {
     grid-template-columns: 1fr;
   }
 }
