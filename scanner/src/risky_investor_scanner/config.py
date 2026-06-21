@@ -55,6 +55,13 @@ class ScannerConfig:
     sma: SmaConfig
 
 
+SUPPORTED_MARKET_DATA_PROVIDERS = {
+    "stooq_csv",
+    "url_template_csv",
+    "yahoo_chart",
+}
+
+
 def _object(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ConfigurationError(f"{label} must be an object.")
@@ -89,29 +96,78 @@ def _number(
     return result
 
 
+def _ticker_map(value: Any, label: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    raw = _object(value, label)
+    result: dict[str, str] = {}
+    for source, target in raw.items():
+        source_text = _text(source, f"{label} source ticker")
+        target_text = _text(target, f"{label} provider ticker")
+        result[source_text.upper()] = target_text
+    return result
+
+
+def _provider_config(
+    provider: dict[str, Any],
+    label: str,
+    *,
+    default_timeout: int | None = None,
+    default_retries: int | None = None,
+) -> dict[str, Any]:
+    provider_name = _text(provider.get("provider"), f"{label} provider")
+    if provider_name not in SUPPORTED_MARKET_DATA_PROVIDERS:
+        raise ConfigurationError("Unsupported market-data provider.")
+    url_template = _text(
+        provider.get("urlTemplate"),
+        f"{label} URL template",
+        required=provider_name != "yahoo_chart",
+    )
+    if url_template and "{ticker}" not in url_template:
+        raise ConfigurationError(
+            "Market-data URL template must contain {ticker}."
+        )
+    timeout = int(
+        _number(
+            provider.get("timeoutSeconds", default_timeout or 20),
+            f"{label} timeout",
+            1,
+            120,
+        )
+    )
+    retries = int(
+        _number(
+            provider.get("maximumRetries", default_retries or 3),
+            f"{label} retries",
+            0,
+            8,
+        )
+    )
+    result: dict[str, Any] = {
+        "provider": provider_name,
+        "timeoutSeconds": timeout,
+        "maximumRetries": retries,
+        "tickerMap": _ticker_map(provider.get("tickerMap"), f"{label} ticker map"),
+    }
+    if url_template:
+        result["urlTemplate"] = url_template
+    return result
+
+
 def validate_config(value: Any) -> ScannerConfig:
     root = _object(value, "Configuration")
     if root.get("version") != 1:
         raise ConfigurationError("Configuration version must be 1.")
     provider = _object(root.get("marketData"), "marketData")
-    provider_name = _text(provider.get("provider"), "Market-data provider")
-    if provider_name not in {"stooq_csv", "url_template_csv"}:
-        raise ConfigurationError("Unsupported market-data provider.")
-    url_template = _text(provider.get("urlTemplate"), "Market-data URL template")
-    if "{ticker}" not in url_template:
-        raise ConfigurationError(
-            "Market-data URL template must contain {ticker}."
+    provider_config = _provider_config(provider, "Market-data")
+    fallback_provider = provider.get("fallbackProvider")
+    if fallback_provider is not None:
+        provider_config["fallbackProvider"] = _provider_config(
+            _object(fallback_provider, "Market-data fallback provider"),
+            "Market-data fallback",
+            default_timeout=int(provider_config["timeoutSeconds"]),
+            default_retries=int(provider_config["maximumRetries"]),
         )
-    provider_config = {
-        "provider": provider_name,
-        "urlTemplate": url_template,
-        "timeoutSeconds": int(
-            _number(provider.get("timeoutSeconds", 20), "Provider timeout", 1, 120)
-        ),
-        "maximumRetries": int(
-            _number(provider.get("maximumRetries", 3), "Provider retries", 0, 8)
-        ),
-    }
 
     strategies = _object(root.get("strategies"), "strategies")
     supertrend_value = strategies.get("dailySuperTrend", {})
