@@ -358,7 +358,10 @@ function StrategySection({ strategy }: { strategy: MultiStrategyRecord }) {
       {strategy.strategyId === "daily-supertrend" ? (
         <SuperTrendWatchlist strategy={strategy} />
       ) : (
-        <RegimeHistory strategy={strategy} />
+        <>
+          <Sma200Watchlist strategy={strategy} />
+          <RegimeHistory strategy={strategy} />
+        </>
       )}
       <ClosedVirtualTrades strategy={strategy} />
 
@@ -518,6 +521,105 @@ function SuperTrendWatchlist({
                     </td>
                     <td>{position?.daysHeld ?? "—"}</td>
                     <td>{latestEvent?.reason ?? "No transition recorded."}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function Sma200Watchlist({ strategy }: { strategy: MultiStrategyRecord }) {
+  const rows = Array.isArray(strategy.parameters.watchlist)
+    ? strategy.parameters.watchlist.filter(
+        (value): value is Record<string, unknown> =>
+          Boolean(value) && typeof value === "object" && !Array.isArray(value),
+      )
+    : [];
+  const fallbackRows =
+    rows.length > 0
+      ? rows
+      : [
+          {
+            signalTicker:
+              strategy.referenceTicker ?? strategy.parameters.referenceTicker,
+            executionTicker:
+              strategy.parameters.riskOnTicker ?? strategy.executionTicker,
+            enabled: strategy.enabled,
+          },
+        ].filter((row) => row.signalTicker || row.executionTicker);
+  return (
+    <article className="control-panel">
+      <div className="control-panel__heading">
+        <div>
+          <span>Monitored tickers</span>
+          <h3>SMA200 signal/reference mappings</h3>
+        </div>
+        <Badge tone="blue">{fallbackRows.length}</Badge>
+      </div>
+      {fallbackRows.length === 0 ? (
+        <p className="settings-note">No SMA200 ticker-pair mapping configured.</p>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Enabled</th>
+                <th>Signal/reference → execution</th>
+                <th>Regime</th>
+                <th>Entry</th>
+                <th>Latest</th>
+                <th>Virtual P/L</th>
+                <th>Days held</th>
+                <th>Latest reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {fallbackRows.map((row, index) => {
+                const signalTicker = String(row.signalTicker ?? "");
+                const executionTicker = String(row.executionTicker ?? "");
+                const position = strategy.virtualPositions.find(
+                  (item) =>
+                    item.signalTicker === signalTicker &&
+                    item.executionTicker === executionTicker,
+                );
+                const latestEvent = [...strategy.events]
+                  .reverse()
+                  .find(
+                    (event) =>
+                      event.signalTicker === signalTicker &&
+                      event.executionTicker === executionTicker,
+                  );
+                return (
+                  <tr key={`sma-${signalTicker}-${executionTicker}-${index}`}>
+                    <td>{row.enabled === true ? "Yes" : "No"}</td>
+                    <td>
+                      {signalTicker || "—"} → {executionTicker || "—"}
+                    </td>
+                    <td>{position ? "risk_on" : "risk_off"}</td>
+                    <td>
+                      {position?.entryTimestamp ?? "—"}
+                      {position?.entryPrice === null ||
+                      position?.entryPrice === undefined
+                        ? ""
+                        : ` · ${formatMoney(position.entryPrice)}`}
+                    </td>
+                    <td>
+                      {position?.latestPrice === null ||
+                      position?.latestPrice === undefined
+                        ? "—"
+                        : formatMoney(position.latestPrice)}
+                    </td>
+                    <td>
+                      {position
+                        ? `${formatMoney(position.openPnlValue)} · ${formatNumber(position.openPnlPercent)}%`
+                        : "—"}
+                    </td>
+                    <td>{position?.daysHeld ?? "—"}</td>
+                    <td>{latestEvent?.reason ?? "No SMA transition recorded."}</td>
                   </tr>
                 );
               })}

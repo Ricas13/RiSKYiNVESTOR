@@ -44,6 +44,20 @@ function strategy(
       : {
           referenceTicker: "QQQ",
           riskOnTicker: "QQQ3.L",
+          watchlist: [
+            {
+              signalTicker: "QQQ",
+              executionTicker: "QQQ3.L",
+              enabled: true,
+              allocationWeight: 1,
+            },
+            {
+              signalTicker: "NVDA",
+              executionTicker: "3NVD.L",
+              enabled: true,
+              allocationWeight: 1,
+            },
+          ],
         },
     currentState: isSuperTrend ? "in_market" : "risk_on",
     modelValue: 10_500,
@@ -121,6 +135,15 @@ function strategy(
             signalTicker: "QQQ",
             executionTicker: "QQQ3.L",
             reason: "Reference closed above SMA200.",
+          },
+          {
+            eventId: "nasdaq-sma200-3x:nvda-risk-off",
+            strategyId,
+            eventType: "exit",
+            occurredAt: "2026-06-19T09:00:00.000Z",
+            signalTicker: "NVDA",
+            executionTicker: "3NVD.L",
+            reason: "NVDA closed below SMA200.",
           },
         ],
     regimeChangeEvents: undefined,
@@ -251,12 +274,16 @@ test("Signal Monitor displays empty state when no ticker pairs exist", () => {
   assert.match(html, /Settings → Strategy Configuration/);
 });
 
-test("Signal Monitor renders SMA200 current regime section", () => {
+test("Signal Monitor renders SMA200 ticker-pair book rows", () => {
   const html = render(monitor(snapshot()));
 
-  assert.match(html, /Nasdaq SMA200 regime/);
+  assert.match(html, /Nasdaq SMA200 ticker-pair book/);
   assert.match(html, /Reference ticker/);
+  assert.match(html, /Signal ticker/);
   assert.match(html, /QQQ/);
   assert.match(html, /QQQ3\.L/);
+  assert.match(html, /NVDA/);
+  assert.match(html, /3NVD\.L/);
+  assert.match(html, /NVDA closed below SMA200/);
   assert.match(html, /risk on/);
 });

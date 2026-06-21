@@ -13,6 +13,7 @@ import type { MultiStrategyPublicState } from "../types";
 import {
   buildSignalMonitorModel,
   type SignalRowStatus,
+  type Sma200SignalRow,
   type Sma200SignalSummary,
   type SuperTrendSignalRow,
 } from "../utils/signalMonitorRows";
@@ -219,7 +220,7 @@ function Sma200Card({ summary }: { summary: Sma200SignalSummary | null }) {
       <div className="control-panel__heading">
         <div>
           <span>SMA200</span>
-          <h2>Nasdaq SMA200 regime</h2>
+          <h2>Nasdaq SMA200 ticker-pair book</h2>
         </div>
         <Badge tone={summary.currentRegime === "risk_on" ? "green" : "red"}>
           {summary.currentRegime.replace(/_/g, " ")}
@@ -251,7 +252,58 @@ function Sma200Card({ summary }: { summary: Sma200SignalSummary | null }) {
           value={summary.daysHeld === null ? "—" : String(summary.daysHeld)}
         />
       </dl>
+      {summary.rows.length > 0 && (
+        <Sma200SignalTable rows={summary.rows} />
+      )}
     </article>
+  );
+}
+
+function Sma200SignalTable({ rows }: { rows: Sma200SignalRow[] }) {
+  return (
+    <div className="table-scroll signal-monitor-table-wrap">
+      <table className="data-table signal-monitor-table">
+        <thead>
+          <tr>
+            <th>Signal ticker</th>
+            <th>Execution ticker</th>
+            <th>Current regime</th>
+            <th>Latest event</th>
+            <th>Latest signal date</th>
+            <th>Model position</th>
+            <th>Open P/L</th>
+            <th>Days held</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.signalTicker}-${row.executionTicker}`}>
+              <td>
+                <strong>{row.signalTicker || "—"}</strong>
+                {!row.enabled && <small>Disabled</small>}
+              </td>
+              <td>{row.executionTicker || "—"}</td>
+              <td>
+                <Badge tone={row.currentRegime === "risk_on" ? "green" : "red"}>
+                  {row.currentRegime.replace(/_/g, " ")}
+                </Badge>
+              </td>
+              <td>{row.latestEventType}</td>
+              <td>{formatOptionalDate(row.latestSignalDate)}</td>
+              <td>
+                <Badge tone={row.modelPosition === "open" ? "green" : "blue"}>
+                  {row.modelPosition}
+                </Badge>
+              </td>
+              <td>{formatSmaPnl(row)}</td>
+              <td>{row.daysHeld ?? "—"}</td>
+              <td>{row.latestReason ?? "No SMA200 transition recorded."}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -304,6 +356,11 @@ function statusTone(status: SignalRowStatus) {
 }
 
 function formatPositionPnl(row: SuperTrendSignalRow) {
+  if (row.openPnlValue === null) return "—";
+  return `${formatMoney(row.openPnlValue)} · ${formatNumber(row.openPnlPercent ?? 0)}%`;
+}
+
+function formatSmaPnl(row: Sma200SignalRow) {
   if (row.openPnlValue === null) return "—";
   return `${formatMoney(row.openPnlValue)} · ${formatNumber(row.openPnlPercent ?? 0)}%`;
 }

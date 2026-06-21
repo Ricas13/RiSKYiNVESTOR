@@ -123,6 +123,10 @@ test("strategy configuration is strict, disabled by default, and written atomica
       defaultStrategyConfiguration.strategies.dailySuperTrend.watchlist,
       [],
     );
+    assert.deepEqual(
+      defaultStrategyConfiguration.strategies.nasdaqSma200.watchlist,
+      [],
+    );
 
     const invalid = structuredClone(defaultStrategyConfiguration);
     invalid.strategies.dailySuperTrend.enabled = true;
@@ -183,6 +187,11 @@ test("strategy presets and ticker catalogue are safe editable templates", () => 
   assert.equal(
     nasdaqPreset.configuration.strategies.nasdaqSma200.riskOffMode,
     "cash",
+  );
+  assert.ok(
+    nasdaqPreset.configuration.strategies.nasdaqSma200.watchlist.every(
+      (row) => row.enabled === false,
+    ),
   );
   assert.equal(
     validateStrategyConfiguration(nasdaqPreset.configuration).strategies
@@ -252,6 +261,34 @@ test("strategy presets and ticker catalogue are safe editable templates", () => 
     validateStrategyConfiguration(dropdownSelected).strategies.nasdaqSma200
       .riskOnTicker,
     selected.marketDataSymbol,
+  );
+
+  const smaBook = structuredClone(defaultStrategyConfiguration);
+  smaBook.strategies.nasdaqSma200.enabled = true;
+  smaBook.strategies.nasdaqSma200.watchlist.push(
+    {
+      signalTicker: "QQQ.US",
+      executionTicker: "QQQ3.UK",
+      enabled: true,
+      allocationWeight: 1,
+    },
+    {
+      signalTicker: "NVDA.US",
+      executionTicker: "3NVD.UK",
+      enabled: true,
+      allocationWeight: 5,
+    },
+  );
+  const validatedSmaBook = validateStrategyConfiguration(smaBook);
+  assert.equal(
+    validatedSmaBook.strategies.nasdaqSma200.watchlist.length,
+    2,
+  );
+  assert.deepEqual(
+    validatedSmaBook.strategies.nasdaqSma200.watchlist.map(
+      (row) => row.signalTicker,
+    ),
+    ["QQQ.US", "NVDA.US"],
   );
 });
 

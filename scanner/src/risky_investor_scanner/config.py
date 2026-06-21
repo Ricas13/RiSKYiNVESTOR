@@ -36,6 +36,7 @@ class SmaConfig:
     enabled: bool
     reference_ticker: str
     risk_on_ticker: str
+    watchlist: tuple[WatchlistRow, ...]
     risk_off_mode: str
     risk_off_ticker: str | None
     sma_length: int
@@ -106,6 +107,10 @@ def _ticker_map(value: Any, label: str) -> dict[str, str]:
         target_text = _text(target, f"{label} provider ticker")
         result[source_text.upper()] = target_text
     return result
+
+
+def _row_key(row: WatchlistRow) -> str:
+    return f"{row.signal_ticker}|{row.execution_ticker}"
 
 
 def _provider_config(
@@ -245,6 +250,44 @@ def validate_config(value: Any) -> ScannerConfig:
     sma_value = strategies.get("nasdaqSma200", {})
     sma_raw = _object(sma_value, "Nasdaq SMA200 Regime")
     sma_enabled = sma_raw.get("enabled") is True
+    sma_watchlist_raw = sma_raw.get("watchlist", [])
+    if not isinstance(sma_watchlist_raw, list):
+        raise ConfigurationError("Nasdaq SMA200 watchlist must be an array.")
+    sma_watchlist: list[WatchlistRow] = []
+    for index, raw in enumerate(sma_watchlist_raw):
+        row = _object(raw, f"SMA200 watchlist row {index + 1}")
+        row_enabled = row.get("enabled") is True
+        sma_watchlist.append(
+            WatchlistRow(
+                signal_ticker=_text(
+                    row.get("signalTicker"),
+                    f"SMA200 watchlist row {index + 1} signal ticker",
+                    required=row_enabled or (sma_enabled and bool(sma_watchlist_raw)),
+                ).upper(),
+                execution_ticker=_text(
+                    row.get("executionTicker"),
+                    f"SMA200 watchlist row {index + 1} execution ticker",
+                    required=row_enabled or (sma_enabled and bool(sma_watchlist_raw)),
+                ).upper(),
+                enabled=row_enabled,
+                allocation_weight=_number(
+                    row.get("allocationWeight", 1),
+                    f"SMA200 watchlist row {index + 1} allocation weight",
+                    0.01,
+                    100,
+                ),
+            )
+        )
+    if sma_enabled and sma_watchlist_raw and not any(row.enabled for row in sma_watchlist):
+        raise ConfigurationError(
+            "Nasdaq SMA200 requires at least one enabled watchlist row when watchlist rows are configured."
+        )
+    sma_mapping_keys = [
+        _row_key(row) for row in sma_watchlist if row.signal_ticker or row.execution_ticker
+    ]
+    if len(set(sma_mapping_keys)) != len(sma_mapping_keys):
+        raise ConfigurationError("Nasdaq SMA200 watchlist mappings must be unique.")
+    legacy_required = sma_enabled and not sma_watchlist_raw
     risk_off_mode = _text(sma_raw.get("riskOffMode", "cash"), "Risk-off mode")
     if risk_off_mode not in {"cash", "instrument"}:
         raise ConfigurationError("Risk-off mode must be cash or instrument.")
@@ -260,13 +303,14 @@ def validate_config(value: Any) -> ScannerConfig:
         reference_ticker=_text(
             sma_raw.get("referenceTicker"),
             "Nasdaq reference ticker",
-            required=sma_enabled,
+            required=legacy_required,
         ).upper(),
         risk_on_ticker=_text(
             sma_raw.get("riskOnTicker"),
             "Nasdaq risk-on ticker",
-            required=sma_enabled,
+            required=legacy_required,
         ).upper(),
+        watchlist=tuple(sma_watchlist),
         risk_off_mode=risk_off_mode,
         risk_off_ticker=risk_off_ticker,
         sma_length=int(
