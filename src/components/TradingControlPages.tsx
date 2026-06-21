@@ -1,5 +1,11 @@
 import { Landmark } from "lucide-react";
+import { useMemo, useState } from "react";
 import type { AuthSession, DashboardData } from "../types";
+import {
+  classifySignalEventAlert,
+  filterSignalEventsForAlertFilter,
+  type SignalEventAlertFilter,
+} from "../utils/signalEventAlerts";
 import { ActualSummaryCards } from "./ActualSummaryCards";
 import { ClosedTradesTable } from "./ClosedTradesTable";
 import { DashboardCommandCentre } from "./DashboardCommandCentre";
@@ -298,6 +304,23 @@ function TradeJournalPage({
   );
 }
 
+const alertFilters: Array<{ value: SignalEventAlertFilter; label: string }> = [
+  { value: "current", label: "Current actions" },
+  { value: "unacknowledged", label: "Unacknowledged" },
+  { value: "acknowledged", label: "Acknowledged" },
+  { value: "historical", label: "Historical" },
+  { value: "scanner-errors", label: "Scanner errors" },
+  { value: "delivery-failures", label: "Delivery failures" },
+  { value: "all", label: "All" },
+];
+
+function emptyAlertFilterCopy(filter: SignalEventAlertFilter) {
+  if (filter === "current") return "No current signal actions require review.";
+  if (filter === "delivery-failures") return "No delivery failures recorded.";
+  if (filter === "scanner-errors") return "No scanner errors recorded.";
+  return "No matching alert history events.";
+}
+
 function AlertsPage({
   data,
   mutate,
@@ -305,6 +328,46 @@ function AlertsPage({
   data: DashboardData;
   mutate: Mutate;
 }) {
+  const [filter, setFilter] = useState<SignalEventAlertFilter>("current");
+  const alertContext = useMemo(
+    () => ({
+      scannerStatus: data.scannerImport.status,
+      scannerGeneratedAt:
+        data.scannerImport.lastGeneratedAt ??
+        data.strategyMonitor.snapshot?.generatedAt ??
+        null,
+      deliveries: data.notifications.deliveries,
+    }),
+    [
+      data.scannerImport.lastGeneratedAt,
+      data.scannerImport.status,
+      data.strategyMonitor.snapshot?.generatedAt,
+      data.notifications.deliveries,
+    ],
+  );
+  const filteredEvents = filterSignalEventsForAlertFilter(
+    data.signalEvents.events,
+    filter,
+    alertContext,
+  );
+  const currentUnacknowledged = filterSignalEventsForAlertFilter(
+    data.signalEvents.events,
+    "current",
+    alertContext,
+  );
+  const acknowledgeEvent = (eventId: string) =>
+    mutate(`/signal-events/${eventId}/acknowledge`, "PUT", {
+      acknowledged: true,
+    }).then(() => undefined);
+  const acknowledgeVisibleCurrent = () => {
+    void Promise.all(
+      currentUnacknowledged.map((event) => acknowledgeEvent(event.eventId)),
+    ).catch((error) =>
+      window.alert(
+        error instanceof Error ? error.message : "Acknowledgement failed.",
+      ),
+    );
+  };
   const retry = (deliveryId: string, confirmResend = false) => {
     void mutate(
       `/notifications/deliveries/${deliveryId}/retry`,
@@ -320,11 +383,47 @@ function AlertsPage({
       <PageHeading
         eyebrow="Alerts"
         title="Event and delivery history"
-        copy="Alert history is the canonical signal-event stream; delivery attempts are recorded alongside it."
+        copy="Current actions stay separate from acknowledged and historical signal events. Nothing is deleted from the audit trail."
       />
+      <section className="control-panel alerts-current-summary">
+        <div className="control-panel__heading">
+          <div>
+            <span>Current actions</span>
+            <h2>
+              {currentUnacknowledged.length
+                ? `${currentUnacknowledged.length} unacknowledged alert${
+                    currentUnacknowledged.length === 1 ? "" : "s"
+                  }`
+                : "No current signal actions require review."}
+            </h2>
+          </div>
+          <button
+            className="event-acknowledge"
+            disabled={!currentUnacknowledged.length}
+            onClick={acknowledgeVisibleCurrent}
+          >
+            Acknowledge all current
+          </button>
+        </div>
+      </section>
+      <div className="alert-filter-tabs" role="tablist" aria-label="Alert filters">
+        {alertFilters.map((item) => (
+          <button
+            key={item.value}
+            type="button"
+            className={filter === item.value ? "is-active" : ""}
+            onClick={() => setFilter(item.value)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
       <SignalEventList
-        events={data.signalEvents.events}
+        events={filteredEvents}
         deliveries={data.notifications.deliveries}
+        emptyCopy={emptyAlertFilterCopy(filter)}
+        eventMeta={(event) => classifySignalEventAlert(event, alertContext)}
+        onAcknowledge={(event) => acknowledgeEvent(event.eventId)}
       />
       <SectionHeader
         eyebrow="Notifications"

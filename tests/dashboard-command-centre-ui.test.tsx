@@ -12,6 +12,10 @@ import type {
 } from "../src/types";
 import { buildActualTradeEquityModel } from "../src/utils/actualTradeEquity";
 import { buildDashboardCommandCentreModel } from "../src/utils/dashboardCommandCentre";
+import {
+  classifySignalEventAlert,
+  filterSignalEventsForAlertFilter,
+} from "../src/utils/signalEventAlerts";
 
 Object.assign(globalThis, { React });
 
@@ -274,11 +278,55 @@ function dashboard(
       events: [
         signalEvent({}),
         signalEvent({
+          eventId: "event-smh-exit",
+          occurredAt: "2026-06-19T09:00:00.000Z",
+          underlyingTicker: "SMH",
+          underlyingName: "SMH",
+          tradeTicker: "3SMH.L",
+          tradeName: "3SMH.L",
+          signalState: "actionable_exit",
+          previousTrend: "green",
+          currentTrend: "red",
+          allocationStatus: "not_applicable",
+          allocationPercent: 0,
+          reasonCode: "trend_exit",
+          reasonText: "Fresh canonical exit.",
+          rawSourceReference: "scanner://run-2026-06-21/smh",
+        }),
+        signalEvent({
+          eventId: "event-qqq-risk-on",
+          occurredAt: "2026-06-18T09:00:00.000Z",
+          strategyId: "nasdaq-sma200-3x",
+          strategyName: "Nasdaq SMA200 Regime — 3x",
+          underlyingTicker: "QQQ",
+          underlyingName: "QQQ",
+          tradeTicker: "QQQ3.L",
+          tradeName: "QQQ3.L",
+          signalState: "actionable_entry",
+          reasonCode: "sma200_risk_on",
+          reasonText: "Reference is 4.2% above SMA200.",
+          rawSourceReference: "scanner://run-2026-06-21/qqq",
+        }),
+        signalEvent({
           eventId: "old-scanner-error",
           occurredAt: "2026-06-10T09:00:00.000Z",
           signalState: "scanner_error",
           reasonText: "Old provider failure.",
           isActionable: false,
+        }),
+        signalEvent({
+          eventId: "old-arm-entry",
+          occurredAt: "2026-06-01T09:00:00.000Z",
+          reasonText: "Old ARM replay entry.",
+        }),
+        signalEvent({
+          eventId: "old-smh-entry",
+          occurredAt: "2026-06-01T09:00:00.000Z",
+          underlyingTicker: "SMH",
+          underlyingName: "SMH",
+          tradeTicker: "3SMH.L",
+          tradeName: "3SMH.L",
+          reasonText: "Old SMH replay entry.",
         }),
       ],
     },
@@ -399,6 +447,156 @@ test("action-needed section includes recent entry, exit and risk events", () => 
   assert.deepEqual(
     model.actionItems.map((item) => item.eventType),
     ["entry", "exit", "risk_on"],
+  );
+});
+
+test("acknowledged current events disappear from dashboard actions but remain in history", () => {
+  const data = dashboard(snapshot(), {
+    signalEvents: {
+      version: 2,
+      isExample: false,
+      events: [
+        signalEvent({
+          eventId: "acknowledged-entry",
+          isAcknowledged: true,
+          acknowledgedAt: "2026-06-20T10:00:00.000Z",
+          acknowledgedBy: "ricardo",
+        }),
+      ],
+    },
+  } as Partial<DashboardData>);
+  const model = buildDashboardCommandCentreModel(data);
+
+  assert.deepEqual(model.actionItems, []);
+  assert.equal(model.recentHistoryEvents[0].eventId, "acknowledged-entry");
+});
+
+test("old ARM and SMH replay entries are historical, not current dashboard actions", () => {
+  const model = buildDashboardCommandCentreModel(dashboard());
+
+  assert.equal(
+    model.actionItems.some((item) => item.reason.includes("Old ARM")),
+    false,
+  );
+  assert.equal(
+    model.actionItems.some((item) => item.reason.includes("Old SMH")),
+    false,
+  );
+});
+
+test("dashboard stale filtering does not mutate scanner output", () => {
+  const data = dashboard();
+  const before = JSON.stringify(data.strategyMonitor.snapshot);
+
+  buildDashboardCommandCentreModel(data);
+
+  assert.equal(JSON.stringify(data.strategyMonitor.snapshot), before);
+});
+
+test("acknowledging an old ARM entry does not suppress a future ARM exit", () => {
+  const data = dashboard(snapshot(), {
+    signalEvents: {
+      version: 2,
+      isExample: false,
+      events: [
+        signalEvent({
+          eventId: "old-arm-entry-acknowledged",
+          occurredAt: "2026-06-01T09:00:00.000Z",
+          isAcknowledged: true,
+        }),
+        signalEvent({
+          eventId: "future-arm-exit",
+          occurredAt: "2026-06-21T09:00:00.000Z",
+          signalState: "actionable_exit",
+          previousTrend: "green",
+          currentTrend: "red",
+          allocationStatus: "not_applicable",
+          allocationPercent: 0,
+          reasonText: "Future ARM exit remains actionable.",
+        }),
+      ],
+    },
+  } as Partial<DashboardData>);
+  const model = buildDashboardCommandCentreModel(data);
+
+  assert.deepEqual(
+    model.actionItems.map((item) => item.key),
+    ["future-arm-exit"],
+  );
+});
+
+test("alert classification separates stale, acknowledged and scanner-error states", () => {
+  const context = {
+    scannerStatus: "current" as const,
+    scannerGeneratedAt: "2026-06-21T11:00:00.000Z",
+    deliveries: [
+      {
+        deliveryId: "delivery-failed",
+        eventId: "event-entry",
+        notificationKey: "dashboard:event-entry",
+        channel: "dashboard" as const,
+        status: "failed" as const,
+        attemptedAt: "2026-06-20T09:05:00.000Z",
+        deliveredAt: null,
+        errorMessage: "Provider unavailable.",
+        providerReference: null,
+        retryCount: 0,
+      },
+    ],
+  };
+  const current = signalEvent({});
+  const historicalError = signalEvent({
+    eventId: "historical-error",
+    signalState: "scanner_error",
+    isActionable: false,
+    occurredAt: "2026-06-10T09:00:00.000Z",
+  });
+  const missingAckState = {
+    ...signalEvent({ eventId: "missing-ack-state" }),
+    isAcknowledged: undefined,
+  } as unknown as SignalEvent;
+
+  assert.equal(classifySignalEventAlert(current, context).isCurrentAction, true);
+  assert.equal(
+    classifySignalEventAlert(historicalError, context).isHistorical,
+    true,
+  );
+  assert.equal(
+    classifySignalEventAlert(missingAckState, context).isCurrentAction,
+    true,
+  );
+  assert.deepEqual(
+    filterSignalEventsForAlertFilter(
+      [current, historicalError],
+      "delivery-failures",
+      context,
+    ).map((event) => event.eventId),
+    ["event-entry"],
+  );
+});
+
+test("current scanner errors become actions only while scanner is unhealthy", () => {
+  const scannerError = signalEvent({
+    eventId: "current-scanner-error",
+    occurredAt: "2026-06-21T09:00:00.000Z",
+    signalState: "scanner_error",
+    isActionable: false,
+    reasonText: "Current provider failure.",
+  });
+
+  assert.equal(
+    classifySignalEventAlert(scannerError, {
+      scannerStatus: "current",
+      scannerGeneratedAt: "2026-06-21T11:00:00.000Z",
+    }).isCurrentAction,
+    false,
+  );
+  assert.equal(
+    classifySignalEventAlert(scannerError, {
+      scannerStatus: "error",
+      scannerGeneratedAt: "2026-06-21T11:00:00.000Z",
+    }).isCurrentAction,
+    true,
   );
 });
 

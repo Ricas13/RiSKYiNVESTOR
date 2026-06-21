@@ -16,6 +16,7 @@ import type {
   SignalState,
 } from "../types";
 import { formatDateTime } from "../utils/format";
+import type { SignalEventAlertMeta } from "../utils/signalEventAlerts";
 import { Badge } from "./ui";
 
 function eventTone(type: SignalState) {
@@ -154,6 +155,7 @@ export function SignalEventList({
   compact = false,
   emptyCopy = "Awaiting scanner data.",
   onAcknowledge,
+  eventMeta,
 }: {
   events: SignalEvent[];
   deliveries?: NotificationDelivery[];
@@ -161,6 +163,7 @@ export function SignalEventList({
   compact?: boolean;
   emptyCopy?: string;
   onAcknowledge?: (event: SignalEvent) => Promise<void>;
+  eventMeta?: (event: SignalEvent) => SignalEventAlertMeta;
 }) {
   const visible = [...events]
     .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
@@ -174,6 +177,7 @@ export function SignalEventList({
         const latestDelivery = deliveries
           .filter((delivery) => delivery.eventId === event.eventId)
           .sort((a, b) => b.attemptedAt.localeCompare(a.attemptedAt))[0];
+        const meta = eventMeta?.(event);
         return (
           <article className="event-row" key={event.eventId}>
             <span
@@ -186,6 +190,11 @@ export function SignalEventList({
                 <Badge tone={eventTone(event.signalState)}>
                   {stateLabel(event.signalState)}
                 </Badge>
+                {meta && (
+                  <Badge tone={meta.isCurrentAction ? "amber" : "neutral"}>
+                    {meta.statusLabel}
+                  </Badge>
+                )}
                 <span>{formatDateTime(event.occurredAt)}</span>
                 <span>{event.strategyName}</span>
               </div>
@@ -198,6 +207,9 @@ export function SignalEventList({
                   {event.reasonCode} · run {event.scannerRunId} · source{" "}
                   {event.source}
                 </small>
+              )}
+              {!compact && meta && (
+                <small className="event-row__status-note">{meta.reason}</small>
               )}
               {!compact && onAcknowledge && !event.isAcknowledged && (
                 <button
@@ -231,7 +243,13 @@ export function SignalEventList({
               </div>
               <div>
                 <dt>Acknowledged</dt>
-                <dd>{event.isAcknowledged ? "yes" : "no"}</dd>
+                <dd>
+                  {event.isAcknowledged
+                    ? event.acknowledgedAt
+                      ? formatDateTime(event.acknowledgedAt)
+                      : "yes"
+                    : "no"}
+                </dd>
               </div>
               <div>
                 <dt>Latest delivery</dt>

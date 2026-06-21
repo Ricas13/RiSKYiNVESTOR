@@ -819,7 +819,10 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
       },
     );
     assert.equal(response.status, 200);
-    assert.equal((await json(response)).isAcknowledged, true);
+    const acknowledgedEvent = await json(response);
+    assert.equal(acknowledgedEvent.isAcknowledged, true);
+    assert.match(acknowledgedEvent.acknowledgedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(acknowledgedEvent.acknowledgedBy, username);
 
     openView = JSON.parse(
       await readFile(path.join(privateData, "open_positions.json"), "utf8"),

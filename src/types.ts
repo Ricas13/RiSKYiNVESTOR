@@ -472,6 +472,9 @@ export interface SignalEvent {
   rawSourceReference: string;
   isActionable: boolean;
   isAcknowledged: boolean;
+  acknowledgedAt?: string | null;
+  acknowledgedBy?: string | null;
+  acknowledgementNote?: string | null;
   discordDeliveryEligible: boolean;
   createdAt: string;
   updatedAt: string;
