@@ -81,6 +81,8 @@ export interface DashboardCommandCentreModel {
   scannerErrorsHiddenFromHistory: boolean;
 }
 
+export const dashboardSignalEventProcessingLimit = 500;
+
 export function buildDashboardCommandCentreModel(
   data: DashboardData,
 ): DashboardCommandCentreModel {
@@ -95,16 +97,25 @@ export function buildDashboardCommandCentreModel(
   );
   const scanner = buildScannerHealth(data);
   const scannerHealthy = scanner.status === "current";
-  const recentHistoryEvents = scannerHealthy
-    ? data.signalEvents.events.filter(
+  const rawSignalEventCandidates = data.signalEvents.events.slice(
+    0,
+    dashboardSignalEventProcessingLimit,
+  );
+  const signalEventCandidates = scannerHealthy
+    ? rawSignalEventCandidates.filter(
         (event) => event.signalState !== "scanner_error",
       )
-    : data.signalEvents.events;
+    : rawSignalEventCandidates;
+  const recentHistoryEvents = scannerHealthy
+    ? signalEventCandidates.filter(
+        (event) => event.signalState !== "scanner_error",
+      )
+    : signalEventCandidates;
 
   return {
     hasScannerSnapshot: Boolean(snapshot),
     scanner,
-    actionItems: buildActionItems(data.signalEvents.events, strategies, scanner),
+    actionItems: buildActionItems(signalEventCandidates, strategies, scanner),
     currentModelPositions: buildCurrentModelPositions(strategies),
     superTrend: {
       ...signalMonitor.summary,
@@ -131,7 +142,9 @@ export function buildDashboardCommandCentreModel(
     recentHistoryEvents,
     scannerErrorsHiddenFromHistory:
       scannerHealthy &&
-      recentHistoryEvents.length !== data.signalEvents.events.length,
+      rawSignalEventCandidates.some(
+        (event) => event.signalState === "scanner_error",
+      ),
   };
 }
 

@@ -104,6 +104,10 @@ export interface MultiStrategyPublicState {
   snapshot: MultiStrategySnapshot | null;
 }
 
+export const defaultStrategyEventImportLimit = 500;
+export const defaultPublicStrategyEventLimit = 250;
+export const defaultPublicScannerWarningLimit = 50;
+
 function objectValue(value: unknown, label: string) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object.`);
@@ -391,6 +395,74 @@ export function validateMultiStrategySnapshot(
   };
 }
 
+export function selectStrategyEventImportCandidates(
+  snapshot: MultiStrategySnapshot,
+  limit = defaultStrategyEventImportLimit,
+) {
+  return snapshot.strategies
+    .flatMap((strategy) => strategy.events)
+    .sort((left, right) => {
+      const byPriority = eventImportPriority(left) - eventImportPriority(right);
+      return byPriority || right.occurredAt.localeCompare(left.occurredAt);
+    })
+    .slice(0, clampLimit(limit, defaultStrategyEventImportLimit));
+}
+
+export function trimMultiStrategyPublicState(
+  state: MultiStrategyPublicState,
+  options: {
+    eventsPerStrategy?: number;
+    scannerWarnings?: number;
+  } = {},
+): MultiStrategyPublicState {
+  if (!state.snapshot) return state;
+  const eventsPerStrategy = clampLimit(
+    options.eventsPerStrategy,
+    defaultPublicStrategyEventLimit,
+  );
+  const scannerWarnings = clampLimit(
+    options.scannerWarnings,
+    defaultPublicScannerWarningLimit,
+  );
+  return {
+    ...state,
+    snapshot: {
+      ...state.snapshot,
+      scanner: {
+        ...state.snapshot.scanner,
+        warnings: state.snapshot.scanner.warnings?.slice(0, scannerWarnings),
+      },
+      strategies: state.snapshot.strategies.map((strategy) => ({
+        ...strategy,
+        events: latestStrategyEvents(strategy.events, eventsPerStrategy),
+        regimeChangeEvents: strategy.regimeChangeEvents
+          ? latestStrategyEvents(strategy.regimeChangeEvents, eventsPerStrategy)
+          : undefined,
+      })),
+    },
+  };
+}
+
+function latestStrategyEvents(events: MultiStrategyEvent[], limit: number) {
+  if (events.length <= limit) return events;
+  return [...events]
+    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+    .slice(0, limit);
+}
+
+function clampLimit(value: number | undefined, fallback: number) {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.trunc(value));
+}
+
+function eventImportPriority(event: MultiStrategyEvent) {
+  return ["entry", "exit", "scannerError", "lowLiquidity"].includes(
+    event.eventType,
+  )
+    ? 0
+    : 1;
+}
+
 async function readOptionalJson(filePath: string) {
   try {
     return JSON.parse(await readFile(filePath, "utf8")) as unknown;
@@ -459,7 +531,7 @@ export class MultiStrategyService {
       let eventImportError: string | null = null;
       try {
         await this.onEvents?.(
-          snapshot.strategies.flatMap((strategy) => strategy.events),
+          selectStrategyEventImportCandidates(snapshot),
         );
       } catch {
         eventImportError =

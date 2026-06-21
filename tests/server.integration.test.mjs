@@ -197,6 +197,65 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
     );
     assert.ok(initialDashboard.dailyPL);
 
+    const oldSignalEvents = Array.from({ length: 600 }, (_, index) => ({
+      eventId: `old-history-${index}`,
+      eventVersion: 1,
+      occurredAt: new Date(Date.UTC(2020, 0, 1, 0, index)).toISOString(),
+      receivedAt: new Date(Date.UTC(2020, 0, 1, 0, index)).toISOString(),
+      strategyId: "baseline-supertrend",
+      strategyName: "Baseline Adaptive SuperTrend",
+      source: "integration_history_seed",
+      underlyingTicker: "ARM",
+      underlyingName: "Historical ARM reference",
+      tradeTicker: "3ARM.L",
+      tradeName: "Historical leveraged ARM instrument",
+      signalState: "no_change",
+      previousTrend: "green",
+      currentTrend: "green",
+      riskTier: "CORE",
+      eligibility: "unknown",
+      allocationStatus: "not_applicable",
+      allocationPercent: 0,
+      reasonCode: "historical_replay",
+      reasonText: `Old historical replay event ${index}.`,
+      scannerRunId: `history-${index}`,
+      rawSourceReference: `integration://history/${index}`,
+      isActionable: false,
+      isAcknowledged: false,
+      acknowledgedAt: null,
+      acknowledgedBy: null,
+      acknowledgementNote: null,
+      discordDeliveryEligible: false,
+      createdAt: new Date(Date.UTC(2020, 0, 1, 0, index)).toISOString(),
+      updatedAt: new Date(Date.UTC(2020, 0, 1, 0, index)).toISOString(),
+    })).sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+    await writeFile(
+      path.join(privateData, "signal_events.json"),
+      JSON.stringify({
+        version: 2,
+        isExample: false,
+        events: oldSignalEvents,
+      }),
+      "utf8",
+    );
+    response = await fetch(`${baseUrl}/api/dashboard`, {
+      headers: authenticatedHeaders,
+    });
+    assert.equal(response.status, 200);
+    const boundedDashboard = await json(response);
+    assert.equal(boundedDashboard.signalEvents.events.length, 500);
+    assert.equal(boundedDashboard.signalEvents.pagination.totalEvents, 600);
+    assert.equal(boundedDashboard.signalEvents.pagination.hasMore, true);
+
+    response = await fetch(
+      `${baseUrl}/api/dashboard?signalEventLimit=25&signalEventOffset=25`,
+      { headers: authenticatedHeaders },
+    );
+    assert.equal(response.status, 200);
+    const pagedDashboard = await json(response);
+    assert.equal(pagedDashboard.signalEvents.events.length, 25);
+    assert.equal(pagedDashboard.signalEvents.pagination.offset, 25);
+
     const strategyResources = initialDashboard.strategyConfiguration.resources;
     assert.ok(strategyResources);
     const nasdaqPreset = strategyResources.presets.find(

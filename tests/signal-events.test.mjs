@@ -206,6 +206,55 @@ test("canonical events remain explicit, deduplicated, and auditable", async () =
   }
 });
 
+test("public signal event reads are bounded while acknowledgements persist", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "risky-events-page-"));
+  try {
+    const repo = await repositories(root);
+    const events = Array.from({ length: 10_050 }, (_, index) =>
+      signalEvent({
+        eventId: `evt-page-${index}`,
+        occurredAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+        receivedAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+        scannerRunId: `run-page-${index}`,
+        rawSourceReference: `fictional://page/${index}`,
+      }),
+    ).sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+    await repo.store.write("signal_events.json", {
+      version: 2,
+      isExample: false,
+      events,
+    });
+
+    const firstPage = await repo.events.readPage({ limit: 500 });
+    assert.equal(firstPage.events.length, 500);
+    assert.equal(firstPage.pagination.returnedEvents, 500);
+    assert.equal(firstPage.pagination.totalEvents, 10_050);
+    assert.equal(firstPage.pagination.totalStoredEvents, 10_050);
+    assert.equal(firstPage.pagination.hasMore, true);
+
+    const secondPage = await repo.events.readPage({ limit: 500, offset: 500 });
+    assert.equal(secondPage.events.length, 500);
+    assert.notEqual(secondPage.events[0].eventId, firstPage.events[0].eventId);
+
+    const acknowledged = await repo.events.acknowledge(
+      "evt-page-10000",
+      true,
+      "integration-user",
+    );
+    assert.equal(acknowledged.isAcknowledged, true);
+    assert.equal(acknowledged.acknowledgedBy, "integration-user");
+    const stored = await repo.events.read();
+    assert.equal(stored.events.length, 10_050);
+    assert.equal(
+      stored.events.find((event) => event.eventId === "evt-page-10000")
+        .isAcknowledged,
+      true,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("scanner exports import once, retain watchlist state, and report staleness", async () => {
   const parent = await mkdtemp(path.join(os.tmpdir(), "risky-scanner-"));
   const privateRoot = path.join(parent, "private");

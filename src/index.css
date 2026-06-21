@@ -3044,6 +3044,12 @@ pre {
   color: var(--green);
 }
 
+.alerts-pagination-note {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin: -2px 0 0;
+}
+
 .event-row__facts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

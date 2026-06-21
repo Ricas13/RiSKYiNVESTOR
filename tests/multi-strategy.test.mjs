@@ -12,6 +12,8 @@ import path from "node:path";
 import test from "node:test";
 import {
   MultiStrategyService,
+  selectStrategyEventImportCandidates,
+  trimMultiStrategyPublicState,
   validateMultiStrategySnapshot,
 } from "../dist-server/multiStrategy.js";
 import {
@@ -327,6 +329,47 @@ test("invalid current scanner output preserves the last known good model dataset
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("large strategy event history is bounded for import and public control-room state", () => {
+  const value = snapshot();
+  const manyEvents = Array.from({ length: 10_050 }, (_, index) => ({
+    eventId: `nasdaq-sma200-3x:history:${index}`,
+    strategyId: "nasdaq-sma200-3x",
+    eventType: index % 2 === 0 ? "entry" : "exit",
+    occurredAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+    signalTicker: "QQQ.US",
+    executionTicker: "QQQ3.UK",
+    reason: `Historical SMA event ${index}.`,
+  }));
+  value.strategies[1].events = manyEvents;
+  const valid = validateMultiStrategySnapshot(value);
+  const originalEventCount = valid.strategies[1].events.length;
+  const importCandidates = selectStrategyEventImportCandidates(valid, 500);
+  const publicState = trimMultiStrategyPublicState(
+    {
+      source: "current",
+      currentFileValid: true,
+      lastError: null,
+      snapshot: valid,
+    },
+    { eventsPerStrategy: 250 },
+  );
+
+  assert.equal(originalEventCount, 10_050);
+  assert.equal(importCandidates.length, 500);
+  assert.equal(
+    importCandidates.some(
+      (event) => event.eventId === "nasdaq-sma200-3x:history:10049",
+    ),
+    true,
+  );
+  assert.equal(
+    publicState.snapshot.strategies[1].events[0].eventId,
+    "nasdaq-sma200-3x:history:10049",
+  );
+  assert.equal(publicState.snapshot.strategies[1].events.length, 250);
+  assert.equal(valid.strategies[1].events.length, 10_050);
 });
 
 test("scanner schema enforces strategy isolation and virtual-only positions", () => {
