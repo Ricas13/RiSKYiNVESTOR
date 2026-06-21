@@ -3,6 +3,7 @@ import { scryptSync } from "node:crypto";
 import { once } from "node:events";
 import {
   mkdtemp,
+  readdir,
   readFile,
   rm,
   writeFile,
@@ -195,6 +196,78 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
       false,
     );
     assert.ok(initialDashboard.dailyPL);
+
+    const strategyResources = initialDashboard.strategyConfiguration.resources;
+    assert.ok(strategyResources);
+    const nasdaqPreset = strategyResources.presets.find(
+      (preset) => preset.presetId === "nasdaq-sma-regime-3x",
+    );
+    const superTrendPreset = strategyResources.presets.find(
+      (preset) => preset.presetId === "daily-supertrend-watchlist-template",
+    );
+    assert.ok(nasdaqPreset);
+    assert.ok(superTrendPreset);
+    assert.equal(
+      nasdaqPreset.configuration.strategies.nasdaqSma200.enabled,
+      false,
+    );
+    assert.equal(
+      superTrendPreset.configuration.strategies.dailySuperTrend.enabled,
+      false,
+    );
+    assert.ok(
+      superTrendPreset.configuration.strategies.dailySuperTrend.watchlist.every(
+        (row) => row.enabled === false,
+      ),
+    );
+    assert.ok(
+      strategyResources.tickerCatalogue.some(
+        (entry) =>
+          entry.category === "UK leveraged Nasdaq" &&
+          entry.marketDataSymbol === "QQQ3.UK",
+      ),
+    );
+
+    const notificationStateBeforePreset = structuredClone(
+      initialDashboard.notifications,
+    );
+    const presetConfiguration = structuredClone(
+      initialDashboard.strategyConfiguration,
+    );
+    presetConfiguration.strategies.nasdaqSma200 =
+      nasdaqPreset.configuration.strategies.nasdaqSma200;
+    response = await fetch(`${baseUrl}/api/strategy-configuration`, {
+      method: "PUT",
+      headers: {
+        ...authenticatedHeaders,
+        "content-type": "application/json",
+        "x-csrf-token": session.csrfToken,
+      },
+      body: JSON.stringify(presetConfiguration),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(
+      (await json(response)).strategies.nasdaqSma200.enabled,
+      false,
+    );
+    response = await fetch(`${baseUrl}/api/dashboard`, {
+      headers: authenticatedHeaders,
+    });
+    assert.equal(response.status, 200);
+    const afterPresetDashboard = await json(response);
+    assert.deepEqual(
+      afterPresetDashboard.notifications,
+      notificationStateBeforePreset,
+    );
+    assert.equal(afterPresetDashboard.strategyMonitor.source, "awaiting");
+    assert.equal(
+      (
+        await readdir(path.join(privateData, "scanner-output")).catch(
+          () => [],
+        )
+      ).includes("multi_strategy_v1.json"),
+      false,
+    );
 
     const strategyConfiguration = structuredClone(
       initialDashboard.strategyConfiguration,
@@ -923,4 +996,4 @@ test("strategy configuration permits admins and rejects non-admin users", async 
       await rm(privateData, { recursive: true, force: true });
     }
   }
-}
+});

@@ -270,6 +270,38 @@ export interface StrategyConfiguration {
       annualInstrumentCostPercent: number;
     };
   };
+  resources?: StrategyConfigurationResources;
+}
+
+export type TickerCatalogueCategory =
+  | "Nasdaq reference"
+  | "UK leveraged Nasdaq"
+  | "UK broad equity ETF"
+  | "UK bond/cash-like/risk-off"
+  | "Other watchlist";
+
+export interface TickerCatalogueEntry {
+  entryId: string;
+  label: string;
+  symbol: string;
+  marketDataSymbol: string;
+  category: TickerCatalogueCategory;
+  notes: string;
+  enabled: boolean;
+}
+
+export interface StrategyConfigurationPreset {
+  presetId: string;
+  strategy: "nasdaqSma200" | "dailySuperTrend";
+  name: string;
+  description: string;
+  warning: string;
+  configuration: StrategyConfiguration;
+}
+
+export interface StrategyConfigurationResources {
+  presets: StrategyConfigurationPreset[];
+  tickerCatalogue: TickerCatalogueEntry[];
 }
 
 export interface MultiStrategyEvent {

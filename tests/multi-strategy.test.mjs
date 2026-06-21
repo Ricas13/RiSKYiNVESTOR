@@ -17,6 +17,9 @@ import {
 import {
   defaultStrategyConfiguration,
   StrategyConfigurationRepository,
+  strategyConfigurationPresets,
+  strategyConfigurationResources,
+  strategyTickerCatalogue,
   validateStrategyConfiguration,
 } from "../dist-server/strategyConfig.js";
 import { JsonStore } from "../dist-server/store.js";
@@ -145,7 +148,9 @@ test("strategy configuration is strict, disabled by default, and written atomica
     valid.strategies.dailySuperTrend.enabled = true;
     const repository = new StrategyConfigurationRepository(root);
     await repository.update(valid);
-    assert.deepEqual(await repository.read(), validateStrategyConfiguration(valid));
+    const saved = await repository.read();
+    assert.deepEqual(validateStrategyConfiguration(saved), validateStrategyConfiguration(valid));
+    assert.ok(saved.resources);
     assert.deepEqual(
       JSON.parse(await readFile(path.join(root, "strategy_config_v1.json"), "utf8")),
       validateStrategyConfiguration(valid),
@@ -157,6 +162,97 @@ test("strategy configuration is strict, disabled by default, and written atomica
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("strategy presets and ticker catalogue are safe editable templates", () => {
+  const resources = strategyConfigurationResources();
+  assert.equal(resources.presets.length, 2);
+  assert.ok(resources.tickerCatalogue.length >= 5);
+  assert.notEqual(resources.presets, strategyConfigurationPresets);
+  assert.notEqual(resources.tickerCatalogue, strategyTickerCatalogue);
+
+  const nasdaqPreset = resources.presets.find(
+    (preset) => preset.presetId === "nasdaq-sma-regime-3x",
+  );
+  assert.ok(nasdaqPreset);
+  assert.equal(nasdaqPreset.strategy, "nasdaqSma200");
+  assert.equal(
+    nasdaqPreset.configuration.strategies.nasdaqSma200.enabled,
+    false,
+  );
+  assert.equal(
+    nasdaqPreset.configuration.strategies.nasdaqSma200.riskOffMode,
+    "cash",
+  );
+  assert.equal(
+    validateStrategyConfiguration(nasdaqPreset.configuration).strategies
+      .nasdaqSma200.enabled,
+    false,
+  );
+
+  const superTrendPreset = resources.presets.find(
+    (preset) => preset.presetId === "daily-supertrend-watchlist-template",
+  );
+  assert.ok(superTrendPreset);
+  assert.equal(superTrendPreset.strategy, "dailySuperTrend");
+  assert.equal(
+    superTrendPreset.configuration.strategies.dailySuperTrend.enabled,
+    false,
+  );
+  assert.ok(
+    superTrendPreset.configuration.strategies.dailySuperTrend.watchlist.every(
+      (row) => row.enabled === false,
+    ),
+  );
+  assert.deepEqual(
+    validateStrategyConfiguration(superTrendPreset.configuration).strategies
+      .dailySuperTrend.watchlist.map((row) => row.enabled),
+    superTrendPreset.configuration.strategies.dailySuperTrend.watchlist.map(
+      () => false,
+    ),
+  );
+
+  const categories = new Set(
+    resources.tickerCatalogue.map((entry) => entry.category),
+  );
+  for (const category of [
+    "Nasdaq reference",
+    "UK leveraged Nasdaq",
+    "UK broad equity ETF",
+    "UK bond/cash-like/risk-off",
+    "Other watchlist",
+  ]) {
+    assert.ok(categories.has(category), `Missing category ${category}`);
+  }
+
+  const custom = structuredClone(defaultStrategyConfiguration);
+  custom.strategies.dailySuperTrend.watchlist.push({
+    signalTicker: "CUSTOM.L",
+    executionTicker: "CUSTOMEXEC.L",
+    enabled: true,
+    allocationWeight: 1,
+  });
+  custom.strategies.dailySuperTrend.enabled = true;
+  assert.equal(
+    validateStrategyConfiguration(custom).strategies.dailySuperTrend.watchlist[0]
+      .signalTicker,
+    "CUSTOM.L",
+  );
+
+  const selected = resources.tickerCatalogue.find(
+    (entry) => entry.category === "UK leveraged Nasdaq" && entry.enabled,
+  );
+  assert.ok(selected);
+  const dropdownSelected = structuredClone(defaultStrategyConfiguration);
+  dropdownSelected.strategies.nasdaqSma200.enabled = true;
+  dropdownSelected.strategies.nasdaqSma200.referenceTicker = "QQQ.US";
+  dropdownSelected.strategies.nasdaqSma200.riskOnTicker =
+    selected.marketDataSymbol;
+  assert.equal(
+    validateStrategyConfiguration(dropdownSelected).strategies.nasdaqSma200
+      .riskOnTicker,
+    selected.marketDataSymbol,
+  );
 });
 
 test("invalid current scanner output preserves the last known good model dataset", async () => {
