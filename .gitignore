@@ -52,3 +52,8 @@ coverage/
 .vite/
 docker-compose.override.yml
 compose.override.yml
+
+# Python scanner caches
+__pycache__/
+*.py[cod]
+.pytest_cache/

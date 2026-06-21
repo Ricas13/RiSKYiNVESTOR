@@ -42,6 +42,26 @@ export const disabledNotificationSettings: NotificationSettings = {
     dailySummary: false,
     weeklySummary: false,
   },
+  strategyPolicies: {
+    "daily-supertrend": {
+      entry: [],
+      exit: [],
+      lowLiquidity: [],
+      stateUpdate: [],
+      dailySummary: [],
+      weeklySummary: [],
+      scannerError: [],
+    },
+    "nasdaq-sma200-3x": {
+      entry: [],
+      exit: [],
+      lowLiquidity: [],
+      stateUpdate: [],
+      dailySummary: [],
+      weeklySummary: [],
+      scannerError: [],
+    },
+  },
   dailySummary: {
     enabled: false,
     time: "21:15",

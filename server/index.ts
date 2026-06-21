@@ -22,6 +22,10 @@ import {
   cleanupDemoData,
 } from "./dataStatus.js";
 import {
+  MultiStrategyService,
+  type MultiStrategyEvent,
+} from "./multiStrategy.js";
+import {
   NotificationDispatcher,
   NotificationScheduler,
   type DailySummaryContext,
@@ -33,6 +37,7 @@ import {
   loadCredentialEncryptionKey,
 } from "./discordDestinations.js";
 import { ScannerImportService } from "./scannerImport.js";
+import { StrategyConfigurationRepository } from "./strategyConfig.js";
 import {
   AlertDeliveryRepository,
   DailyPortfolioSnapshotRepository,
@@ -54,6 +59,10 @@ interface TradeExit {
 interface ManualTrade {
   id: string;
   strategyName: string;
+  sleeve?:
+    | "SuperTrend"
+    | "SMA200 Regime"
+    | "Discretionary / untagged";
   assetName: string;
   ticker: string;
   direction: "long" | "cash" | "other";
@@ -256,6 +265,90 @@ const notificationDispatcher = new NotificationDispatcher(
   alertDeliveryRepository,
   discordDestinationManager,
 );
+const strategyConfigurationRepository =
+  new StrategyConfigurationRepository();
+function canonicalStrategyEvent(event: MultiStrategyEvent) {
+  const actionableEntry = event.eventType === "entry";
+  const actionableExit = event.eventType === "exit";
+  const strategyName =
+    event.strategyId === "daily-supertrend"
+      ? "Daily SuperTrend"
+      : "Nasdaq SMA200 Regime — 3x";
+  const signalState =
+    event.eventType === "entry"
+      ? "actionable_entry"
+      : event.eventType === "exit"
+        ? "actionable_exit"
+        : event.eventType === "lowLiquidity"
+          ? "low_liquidity_warning"
+          : event.eventType === "scannerError"
+            ? "scanner_error"
+            : "watchlist_only";
+  const reasonCode =
+    event.eventType === "dailySummary"
+      ? "strategy_daily_summary"
+      : event.eventType === "weeklySummary"
+        ? "strategy_weekly_summary"
+        : event.eventType === "stateUpdate"
+          ? "strategy_state_update"
+          : `strategy_${event.eventType}`;
+  return {
+    eventId: event.eventId,
+    eventVersion: 1,
+    occurredAt: new Date(event.occurredAt).toISOString(),
+    receivedAt: new Date().toISOString(),
+    strategyId: event.strategyId,
+    strategyName,
+    source: "integrated_python_scanner",
+    underlyingTicker: event.signalTicker,
+    underlyingName: event.signalTicker,
+    tradeTicker: event.executionTicker,
+    tradeName: event.executionTicker,
+    signalState,
+    previousTrend: actionableEntry
+      ? "red"
+      : actionableExit
+        ? "green"
+        : "unknown",
+    currentTrend: actionableEntry
+      ? "green"
+      : actionableExit
+        ? "red"
+        : "unknown",
+    riskTier: "CORE",
+    eligibility: actionableEntry || actionableExit ? "eligible" : "unknown",
+    allocationStatus:
+      actionableEntry || actionableExit ? "normal" : "not_applicable",
+    allocationPercent: actionableEntry || actionableExit ? 100 : 0,
+    reasonCode,
+    reasonText: event.reason,
+    scannerRunId: event.eventId,
+    rawSourceReference: `multi_strategy_v1:${event.eventId}`,
+    isActionable: actionableEntry || actionableExit,
+    isAcknowledged: false,
+    discordDeliveryEligible: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+const multiStrategyService = new MultiStrategyService(store, {
+  onEvents: async (events) => {
+    for (const event of events) {
+      const result = await signalEventRepository.saveCanonical([
+        canonicalStrategyEvent(event),
+      ]);
+      for (const accepted of result.accepted) {
+        await alertDeliveryRepository.recordDashboardSent(
+          accepted.eventId,
+          accepted.reasonText,
+        );
+        await notificationDispatcher
+          .dispatchSignal(accepted)
+          .catch(() => undefined);
+      }
+    }
+  },
+});
 await signalEventRepository.initialiseFromLegacy(
   (await store.readOptional<Array<Record<string, unknown>>>(
     "model/signals_archive.json",
@@ -343,6 +436,14 @@ function stringValue(value: unknown, field: string, required = true) {
 
 function booleanValue(value: unknown) {
   return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function tradeSleeve(
+  value: unknown,
+): NonNullable<ManualTrade["sleeve"]> {
+  return ["SuperTrend", "SMA200 Regime"].includes(String(value))
+    ? (value as "SuperTrend" | "SMA200 Regime")
+    : "Discretionary / untagged";
 }
 
 function csvEscape(value: unknown) {
@@ -710,7 +811,12 @@ const protectedApi = express.Router();
 protectedApi.use(requireSession(sessionSecret));
 
 protectedApi.get("/dashboard", async (_request, response) => {
-  const scannerImport = await scannerImportService.refreshIfDue();
+  const [scannerImport, strategyMonitor, strategyConfiguration] =
+    await Promise.all([
+      scannerImportService.refreshIfDue(),
+      multiStrategyService.refresh(),
+      strategyConfigurationRepository.read(),
+    ]);
   const [
     summary,
     watchlist,
@@ -783,6 +889,8 @@ protectedApi.get("/dashboard", async (_request, response) => {
     dailyPL,
     latestPortfolioSnapshot,
     scannerImport: scannerImportService.toPublicState(scannerImport),
+    strategyMonitor,
+    strategyConfiguration,
     dataStatus,
   });
 });
@@ -967,6 +1075,26 @@ protectedApi.put(
     delete file.notice;
     await store.write("alerts.json", file);
     response.json(alert);
+  }),
+);
+
+protectedApi.put(
+  "/strategy-configuration",
+  requireOwner,
+  requireCsrf(sessionSecret),
+  safeMutation(async (request, response) => {
+    response.json(
+      await strategyConfigurationRepository.update(request.body),
+    );
+  }),
+);
+
+protectedApi.post(
+  "/scanner/refresh",
+  requireOwner,
+  requireCsrf(sessionSecret),
+  safeMutation(async (_request, response) => {
+    response.json(await multiStrategyService.refresh(true));
   }),
 );
 
@@ -1210,6 +1338,7 @@ protectedApi.get("/export/trades.csv", async (_request, response) => {
   const headers = [
     "id",
     "strategyName",
+    "sleeve",
     "assetName",
     "ticker",
     "direction",
@@ -1285,6 +1414,7 @@ protectedApi.post(
       return {
         id: row.id?.trim() || randomUUID(),
         strategyName: stringValue(row.strategyName, "Strategy"),
+        sleeve: tradeSleeve(row.sleeve),
         assetName: stringValue(row.assetName, "Asset name"),
         ticker: stringValue(row.ticker, "Ticker").toUpperCase(),
         direction: ["long", "cash", "other"].includes(row.direction)
@@ -1443,6 +1573,7 @@ protectedApi.post(
     const trade: ManualTrade = {
       id: randomUUID(),
       strategyName: stringValue(request.body.strategyName, "Strategy"),
+      sleeve: tradeSleeve(request.body.sleeve),
       assetName: stringValue(request.body.assetName, "Asset name"),
       ticker: stringValue(request.body.ticker, "Ticker").toUpperCase(),
       direction: ["long", "cash", "other"].includes(request.body.direction)
@@ -1544,6 +1675,7 @@ protectedApi.put(
     file.trades[index] = {
       ...current,
       strategyName: stringValue(request.body.strategyName, "Strategy"),
+      sleeve: tradeSleeve(request.body.sleeve ?? current.sleeve),
       assetName: stringValue(request.body.assetName, "Asset name"),
       ticker: stringValue(request.body.ticker, "Ticker").toUpperCase(),
       direction: ["long", "cash", "other"].includes(request.body.direction)

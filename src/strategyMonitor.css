@@ -1,0 +1,170 @@
+.strategy-monitor,
+.strategy-monitor__section {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.strategy-monitor__heading {
+  align-items: end;
+  display: flex;
+  justify-content: space-between;
+}
+
+.strategy-monitor__warning {
+  align-items: center;
+  background: color-mix(in srgb, var(--warning) 12%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  border-radius: var(--radius);
+  color: var(--text);
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+}
+
+.strategy-monitor__tabs {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 0.4rem;
+}
+
+.strategy-monitor__tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 0.65rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0.7rem 0.9rem;
+  white-space: nowrap;
+}
+
+.strategy-monitor__tabs button.is-active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.strategy-monitor__section {
+  border-top: 1px solid var(--border);
+  padding-top: 1.25rem;
+}
+
+.strategy-monitor__title > div {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.strategy-monitor__title h2 {
+  margin: 0.55rem 0 0.25rem;
+}
+
+.strategy-monitor__title p,
+.strategy-monitor__title span {
+  color: var(--text-muted);
+}
+
+.strategy-monitor__metrics {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.strategy-monitor__metrics article {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem;
+}
+
+.strategy-monitor__metrics svg {
+  color: var(--accent);
+}
+
+.strategy-monitor__metrics span,
+.strategy-monitor__metrics small {
+  color: var(--text-muted);
+}
+
+.strategy-monitor__metrics strong {
+  font-size: 1.25rem;
+}
+
+.strategy-monitor__grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1.5fr) minmax(18rem, 0.7fr);
+}
+
+.strategy-monitor__chart {
+  height: 17rem;
+}
+
+.strategy-monitor__facts {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.strategy-monitor__facts div {
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 0.25rem;
+  padding-bottom: 0.7rem;
+}
+
+.strategy-monitor__facts dt {
+  color: var(--text-muted);
+}
+
+.strategy-monitor__facts dd {
+  font-weight: 700;
+  margin: 0;
+}
+
+.strategy-monitor__parameters {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+.strategy-monitor__parameters summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.strategy-monitor__parameters pre {
+  color: var(--text-muted);
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 900px) {
+  .strategy-monitor__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .strategy-monitor__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .strategy-monitor__heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+
+  .strategy-monitor__metrics {
+    grid-template-columns: 1fr;
+  }
+}

@@ -31,7 +31,7 @@ const navigation: Array<{
   { page: "portfolio", label: "Portfolio", icon: WalletCards },
   { page: "performance", label: "Performance", icon: BarChart3 },
   { page: "trade-journal", label: "Trade Journal", icon: BookOpen },
-  { page: "strategies", label: "Strategies", icon: CandlestickChart },
+  { page: "strategies", label: "Strategy Monitor", icon: CandlestickChart },
   { page: "alerts", label: "Alerts", icon: MessageSquareWarning },
   { page: "settings", label: "Settings", icon: Settings2 },
 ];
@@ -162,7 +162,7 @@ export function DashboardLayout({
             <span className="topbar-page-eyebrow">Private dashboard</span>
             <strong className="topbar-kicker">{pageLabel}</strong>
             <span className="topbar-scan">
-              {scannerStatus ?? "Loading scanner stateâ€¦"}
+              {scannerStatus ?? "Loading scanner state…"}
             </span>
           </div>
           <div className="topbar-actions">
@@ -186,7 +186,7 @@ export function DashboardLayout({
           <div className="demo-data-warning" role="alert">
             <FileWarning size={20} />
             <div>
-              <strong>Demo data present â€” not live portfolio or scanner data</strong>
+              <strong>Demo data present — not live portfolio or scanner data</strong>
               <p>
                 Displayed historical trades, P/L, portfolio values, and backtests
                 may be examples. Scanner status is shown separately above.
@@ -197,7 +197,7 @@ export function DashboardLayout({
         )}
         <main>{children}</main>
         <footer className="site-footer">
-          <p>Risky Investor Â· Private trading control</p>
+          <p>Risky Investor · Private trading control</p>
           <p>Signals and education only. No broker execution.</p>
         </footer>
       </div>

@@ -11,7 +11,6 @@ import { formatMoney, formatNumber } from "../utils/format";
 import { ActualSummaryCards } from "./ActualSummaryCards";
 import { BacktestResults } from "./BacktestResults";
 import { ClosedTradesTable } from "./ClosedTradesTable";
-import { ConfigViewer } from "./ConfigViewer";
 import { DrawdownPainTracker } from "./DrawdownPainTracker";
 import { ManualTrades } from "./ManualTrades";
 import { OpenPositionsTable } from "./OpenPositionsTable";
@@ -26,10 +25,8 @@ import {
 } from "./SignalEvents";
 import { SignalComparison } from "./SignalComparison";
 import { SettingsPage } from "./SettingsPage";
-import { StrategyRules } from "./StrategyRules";
-import { SummaryCards } from "./SummaryCards";
+import { StrategyMonitor } from "./StrategyMonitor";
 import { Badge, LiquidityBadge, SectionHeader, TierBadge, TrendBadge } from "./ui";
-import { WatchlistTable } from "./WatchlistTable";
 import { WealthDashboard } from "./WealthDashboard";
 
 export type ControlPage =
@@ -73,12 +70,21 @@ export function TradingControlPage({
   if (page === "trade-journal") {
     return <TradeJournalPage data={data} mutate={mutate} />;
   }
-  if (page === "strategies") return <StrategiesPage data={data} />;
+  if (page === "strategies") {
+    return (
+      <StrategyMonitor
+        monitor={data.strategyMonitor}
+        refresh={() => mutate("/scanner/refresh", "POST")}
+        canRefresh={session.role === "owner" || session.role === "admin"}
+      />
+    );
+  }
   if (page === "alerts") return <AlertsPage data={data} mutate={mutate} />;
   if (page === "settings") {
     return (
       <SettingsPage
         notifications={data.notifications}
+        strategyConfiguration={data.strategyConfiguration}
         session={session}
         dataStatus={data.dataStatus}
         mutate={mutate}
@@ -495,57 +501,6 @@ function TradeJournalPage({
         isExample={data.manualTrades.isExample}
         mutate={mutate}
       />
-    </div>
-  );
-}
-
-function StrategiesPage({ data }: { data: DashboardData }) {
-  const hasStrategies =
-    data.strategies.strategies.length > 0 || data.watchlist.length > 0;
-  return (
-    <div className="control-page-stack">
-      <PageHeading
-        eyebrow="Strategies"
-        title="Rules, registry and current state"
-        copy="Strategy definitions remain separate from user trades and canonical event history."
-      />
-      {!hasStrategies && (
-        <div className="truthful-empty-state">
-          <CircleDollarSign size={24} />
-          <div>
-            <h2>No strategy or watchlist data configured</h2>
-            <p>
-              Awaiting scanner data and genuine strategy definitions. Historical
-              model results are not substituted.
-            </p>
-          </div>
-        </div>
-      )}
-      {hasStrategies && (
-        <div className="strategy-status-grid">
-          {data.strategies.strategies.map((strategy) => (
-            <article className="strategy-status-card" key={strategy.id}>
-              <div>
-                <Badge tone={strategy.status === "active" ? "green" : "amber"}>
-                  {strategy.status}
-                </Badge>
-                <span>{strategy.timeframe}</span>
-              </div>
-              <h3>{strategy.name}</h3>
-              <p>{strategy.description}</p>
-              <strong>Historical quality {strategy.historicalQuality}/100</strong>
-            </article>
-          ))}
-        </div>
-      )}
-      {hasStrategies && (
-        <>
-          <SummaryCards summary={data.summary} />
-          <WatchlistTable items={data.watchlist} />
-          <StrategyRules config={data.config} />
-          <ConfigViewer config={data.config} />
-        </>
-      )}
     </div>
   );
 }

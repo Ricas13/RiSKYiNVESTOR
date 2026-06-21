@@ -1,0 +1,495 @@
+from __future__ import annotations
+
+from datetime import date, timedelta
+from pathlib import Path
+import json
+
+import pytest
+
+from risky_investor_scanner import engine as engine_module
+from risky_investor_scanner.calculations import (
+    SuperTrendPoint,
+    simple_moving_average,
+    supertrend,
+)
+from risky_investor_scanner.config import ConfigurationError, validate_config
+from risky_investor_scanner.engine import ScannerEngine
+from risky_investor_scanner.market_data import PriceBar
+from risky_investor_scanner.storage import atomic_write_json
+
+
+def bars(values: list[float], start: date = date(2024, 1, 1)) -> list[PriceBar]:
+    return [
+        PriceBar(
+            day=start + timedelta(days=index),
+            open=value,
+            high=value + 1,
+            low=value - 1,
+            close=value,
+            volume=1_000_000,
+        )
+        for index, value in enumerate(values)
+    ]
+
+
+def weekday_bars(
+    values: list[float], start: date = date(2024, 1, 1)
+) -> list[PriceBar]:
+    result: list[PriceBar] = []
+    current = start
+    for value in values:
+        while current.weekday() >= 5:
+            current += timedelta(days=1)
+        result.append(
+            PriceBar(
+                day=current,
+                open=value,
+                high=value + 1,
+                low=value - 1,
+                close=value,
+                volume=1_000_000,
+            )
+        )
+        current += timedelta(days=1)
+    return result
+
+
+def marker_bars(marker: int, length: int = 6) -> list[PriceBar]:
+    values = [float(marker + index) for index in range(length)]
+    return bars(values)
+
+
+def configuration(
+    super_enabled=True,
+    sma_enabled=True,
+    *,
+    watchlist: list[dict[str, object]] | None = None,
+    allocation_policy="equal_weight",
+    maximum_concurrent_positions=2,
+    supertrend_capital=10_000,
+    supertrend_cost=0.1,
+    sma_review_cadence="daily",
+    sma_annual_cost=0.75,
+    sma_transaction_cost=0.1,
+):
+    return {
+        "version": 1,
+        "marketData": {
+            "provider": "url_template_csv",
+            "urlTemplate": "https://prices.invalid/{ticker}.csv",
+            "timeoutSeconds": 5,
+            "maximumRetries": 0,
+        },
+        "strategies": {
+            "dailySuperTrend": {
+                "enabled": super_enabled,
+                "timeframe": "1d",
+                "atrPeriod": 3,
+                "multiplier": 2,
+                "modelStartingCapital": supertrend_capital,
+                "allocationPolicy": allocation_policy,
+                "maximumConcurrentPositions": maximum_concurrent_positions,
+                "transactionCostPercent": supertrend_cost,
+                "watchlist": watchlist
+                if watchlist is not None
+                else [
+                    {
+                        "signalTicker": "SIGNAL",
+                        "executionTicker": "EXEC",
+                        "enabled": True,
+                        "allocationWeight": 1,
+                    }
+                ],
+            },
+            "nasdaqSma200": {
+                "enabled": sma_enabled,
+                "referenceTicker": "REFERENCE",
+                "riskOnTicker": "RISKON",
+                "riskOffMode": "cash",
+                "riskOffTicker": "",
+                "smaLength": 3,
+                "reviewCadence": sma_review_cadence,
+                "riskOnThresholdPercent": 0,
+                "riskOffThresholdPercent": 0,
+                "modelStartingCapital": 20_000,
+                "transactionCostPercent": sma_transaction_cost,
+                "annualInstrumentCostPercent": sma_annual_cost,
+            },
+        },
+    }
+
+
+class Provider:
+    def __init__(self):
+        self.values = {
+            "SIGNAL": bars([12, 11, 10, 9, 15, 16, 17]),
+            "EXEC": bars([10, 10, 10, 10, 12, 13, 14]),
+            "REFERENCE": bars([10, 10, 10, 12, 13]),
+            "RISKON": bars([10, 10, 10, 11, 12]),
+        }
+
+    def fetch(self, ticker):
+        return self.values[ticker]
+
+
+def strategy(snapshot, strategy_id):
+    return next(
+        item for item in snapshot["strategies"] if item["strategyId"] == strategy_id
+    )
+
+
+def event_types(item):
+    return [event["eventType"] for event in item["events"]]
+
+
+def patch_supertrend(monkeypatch, states_by_marker: dict[int, list[str]]):
+    def fake_supertrend(signal_bars, _atr_period, _multiplier):
+        marker = int(signal_bars[0].close)
+        states = states_by_marker[marker]
+        return [
+            SuperTrendPoint(
+                date=signal_bars[index].day.isoformat(),
+                close=signal_bars[index].close,
+                value=signal_bars[index].close,
+                state=state,
+            )
+            for index, state in enumerate(states)
+        ]
+
+    monkeypatch.setattr(engine_module, "supertrend", fake_supertrend)
+
+
+def test_configuration_validation_and_disabled_behavior(tmp_path):
+    valid = validate_config(configuration())
+    assert valid.supertrend.enabled is True
+    assert valid.sma.sma_length == 3
+    invalid = configuration()
+    invalid["strategies"]["nasdaqSma200"]["riskOffMode"] = "instrument"
+    with pytest.raises(ConfigurationError):
+        validate_config(invalid)
+    disabled = validate_config(configuration(False, False))
+    snapshot = ScannerEngine(
+        disabled, Provider(), tmp_path / "state", tmp_path / "output"
+    ).scan()
+    assert snapshot["scanner"]["status"] == "not_configured"
+    assert all(item["status"] == "disabled" for item in snapshot["strategies"])
+    incomplete = configuration(False, False)
+    incomplete["strategies"]["dailySuperTrend"] = {"enabled": False}
+    incomplete["strategies"]["nasdaqSma200"] = {"enabled": False}
+    disabled_incomplete = validate_config(incomplete)
+    assert disabled_incomplete.supertrend.watchlist == ()
+    assert disabled_incomplete.sma.reference_ticker == ""
+
+
+def test_calculations_and_isolated_lifecycles(tmp_path):
+    assert simple_moving_average(bars([1, 2, 3, 4]), 3) == 3
+    points = supertrend(bars([12, 11, 10, 9, 15, 16, 17]), 3, 2)
+    assert points
+    snapshot = ScannerEngine(
+        validate_config(configuration()),
+        Provider(),
+        tmp_path / "state",
+        tmp_path / "output",
+    ).scan()
+    by_id = {item["strategyId"]: item for item in snapshot["strategies"]}
+    assert set(by_id) == {"daily-supertrend", "nasdaq-sma200-3x"}
+    assert by_id["daily-supertrend"]["parameters"].get("smaLength") is None
+    assert by_id["nasdaq-sma200-3x"]["parameters"].get("atrPeriod") is None
+    assert by_id["nasdaq-sma200-3x"]["currentState"] == "risk_on"
+
+
+def test_repeated_scan_has_no_duplicate_events_and_state_survives(tmp_path):
+    config = validate_config(configuration())
+    first = ScannerEngine(
+        config, Provider(), tmp_path / "state", tmp_path / "output"
+    ).scan()
+    second = ScannerEngine(
+        config, Provider(), tmp_path / "state", tmp_path / "output"
+    ).scan()
+    for strategy_id in {"daily-supertrend", "nasdaq-sma200-3x"}:
+        first_events = strategy(first, strategy_id)["events"]
+        second_events = strategy(second, strategy_id)["events"]
+        assert [item["eventId"] for item in first_events] == [
+            item["eventId"] for item in second_events
+        ]
+    assert (tmp_path / "state" / "model_state_v1.json").exists()
+
+
+def test_supertrend_rebuild_replays_historical_entries_exits_and_open_current(
+    tmp_path, monkeypatch
+):
+    patch_supertrend(
+        monkeypatch,
+        {101: ["out", "in", "in", "out", "out", "in"]},
+    )
+    provider = Provider()
+    provider.values = {
+        "SIGNAL": marker_bars(101, 6),
+        "EXEC": bars([10, 11, 12, 13, 14, 15]),
+    }
+    config = validate_config(configuration(super_enabled=True, sma_enabled=False))
+    first = ScannerEngine(
+        config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan(rebuild_history=True)
+    first_strategy = strategy(first, "daily-supertrend")
+    assert event_types(first_strategy) == ["entry", "exit", "entry"]
+    assert len(first_strategy["closedVirtualTrades"]) == 1
+    assert first_strategy["virtualPositions"][0]["entryTimestamp"] == "2024-01-06"
+    assert first_strategy["virtualPositions"][0]["latestPrice"] == 15
+
+    repeated = ScannerEngine(
+        config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan()
+    rebuilt = ScannerEngine(
+        config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan(rebuild_history=True)
+    assert [
+        event["eventId"]
+        for event in strategy(repeated, "daily-supertrend")["events"]
+    ] == [event["eventId"] for event in first_strategy["events"]]
+    assert strategy(rebuilt, "daily-supertrend")["events"] == first_strategy["events"]
+    assert strategy(rebuilt, "daily-supertrend")["modelValue"] == pytest.approx(
+        first_strategy["modelValue"]
+    )
+
+
+def test_supertrend_allocation_policies_and_concurrency(
+    tmp_path, monkeypatch
+):
+    patch_supertrend(
+        monkeypatch,
+        {
+            101: ["out", "in", "in", "in"],
+            102: ["out", "in", "in", "in"],
+            103: ["out", "out", "out", "out"],
+        },
+    )
+    provider = Provider()
+    provider.values = {
+        "SIGA": marker_bars(101, 4),
+        "EXEA": bars([10, 10, 10, 10]),
+        "SIGB": marker_bars(102, 4),
+        "EXEB": bars([10, 10, 10, 10]),
+        "SIGC": marker_bars(103, 4),
+        "EXEC": bars([10, 10, 10, 10]),
+    }
+    watchlist = [
+        {
+            "signalTicker": "SIGA",
+            "executionTicker": "EXEA",
+            "enabled": True,
+            "allocationWeight": 1,
+        },
+        {
+            "signalTicker": "SIGB",
+            "executionTicker": "EXEB",
+            "enabled": True,
+            "allocationWeight": 2,
+        },
+        {
+            "signalTicker": "SIGC",
+            "executionTicker": "EXEC",
+            "enabled": True,
+            "allocationWeight": 7,
+        },
+    ]
+    equal = ScannerEngine(
+        validate_config(
+            configuration(
+                super_enabled=True,
+                sma_enabled=False,
+                watchlist=watchlist,
+                allocation_policy="equal_weight",
+                maximum_concurrent_positions=3,
+                supertrend_capital=9_000,
+                supertrend_cost=0,
+            )
+        ),
+        provider,
+        tmp_path / "equal-state",
+        tmp_path / "equal-output",
+    ).scan()
+    weighted = ScannerEngine(
+        validate_config(
+            configuration(
+                super_enabled=True,
+                sma_enabled=False,
+                watchlist=watchlist,
+                allocation_policy="weighted",
+                maximum_concurrent_positions=3,
+                supertrend_capital=9_000,
+                supertrend_cost=0,
+            )
+        ),
+        provider,
+        tmp_path / "weighted-state",
+        tmp_path / "weighted-output",
+    ).scan()
+    equal_strategy = strategy(equal, "daily-supertrend")
+    weighted_strategy = strategy(weighted, "daily-supertrend")
+    assert [item["allocation"] for item in equal_strategy["virtualPositions"]] == [
+        3_000,
+        3_000,
+    ]
+    assert [
+        item["allocation"] for item in weighted_strategy["virtualPositions"]
+    ] == [
+        900,
+        1_800,
+    ]
+    assert equal_strategy["cash"] == pytest.approx(3_000)
+    assert weighted_strategy["cash"] == pytest.approx(6_300)
+    assert weighted_strategy["cash"] >= 0
+
+    capped = ScannerEngine(
+        validate_config(
+            configuration(
+                super_enabled=True,
+                sma_enabled=False,
+                watchlist=watchlist,
+                maximum_concurrent_positions=1,
+                supertrend_capital=9_000,
+                supertrend_cost=0,
+            )
+        ),
+        provider,
+        tmp_path / "capped-state",
+        tmp_path / "capped-output",
+    ).scan()
+    assert len(strategy(capped, "daily-supertrend")["virtualPositions"]) == 1
+
+
+def test_sma_daily_and_weekly_cadence_are_historical_and_idempotent(tmp_path):
+    provider = Provider()
+    provider.values = {
+        "REFERENCE": weekday_bars([10, 10, 10, 12, 13, 6, 6]),
+        "RISKON": weekday_bars([100, 100, 100, 100, 100, 100, 100]),
+    }
+    daily_config = validate_config(
+        configuration(
+            super_enabled=False,
+            sma_enabled=True,
+            sma_review_cadence="daily",
+            sma_annual_cost=0,
+            sma_transaction_cost=0,
+        )
+    )
+    daily = ScannerEngine(
+        daily_config, provider, tmp_path / "daily-state", tmp_path / "daily-output"
+    ).scan()
+    daily_strategy = strategy(daily, "nasdaq-sma200-3x")
+    assert daily_strategy["currentState"] == "risk_off"
+    assert event_types(daily_strategy) == ["entry", "exit"]
+
+    weekly_config = validate_config(
+        configuration(
+            super_enabled=False,
+            sma_enabled=True,
+            sma_review_cadence="weekly",
+            sma_annual_cost=0,
+            sma_transaction_cost=0,
+        )
+    )
+    weekly = ScannerEngine(
+        weekly_config,
+        provider,
+        tmp_path / "weekly-state",
+        tmp_path / "weekly-output",
+    ).scan()
+    weekly_strategy = strategy(weekly, "nasdaq-sma200-3x")
+    assert weekly_strategy["currentState"] == "risk_on"
+    assert event_types(weekly_strategy) == ["entry"]
+    assert weekly_strategy["lastEvaluatedMarketPeriod"] == "2024-W01"
+
+    repeated = ScannerEngine(
+        weekly_config,
+        provider,
+        tmp_path / "weekly-state",
+        tmp_path / "weekly-output",
+    ).scan()
+    assert [
+        event["eventId"]
+        for event in strategy(repeated, "nasdaq-sma200-3x")["events"]
+    ] == [event["eventId"] for event in weekly_strategy["events"]]
+
+
+def test_sma_annual_instrument_cost_is_durable_and_not_double_charged(tmp_path):
+    provider = Provider()
+    provider.values = {
+        "REFERENCE": weekday_bars([10, 10, 10, 12, 13, 14, 15]),
+        "RISKON": weekday_bars([100, 100, 100, 100, 100, 100, 100]),
+    }
+    config = validate_config(
+        configuration(
+            super_enabled=False,
+            sma_enabled=True,
+            sma_annual_cost=18.25,
+            sma_transaction_cost=0,
+        )
+    )
+    first = ScannerEngine(
+        config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan()
+    first_strategy = strategy(first, "nasdaq-sma200-3x")
+    assert first_strategy["currentState"] == "risk_on"
+    assert first_strategy["lastCostAccrualDate"] == "2024-01-09"
+    assert first_strategy["modelValue"] < 20_000
+
+    repeated = ScannerEngine(
+        config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan()
+    repeated_strategy = strategy(repeated, "nasdaq-sma200-3x")
+    assert repeated_strategy["modelValue"] == pytest.approx(
+        first_strategy["modelValue"]
+    )
+    assert repeated_strategy["virtualPositions"][0]["quantity"] == pytest.approx(
+        first_strategy["virtualPositions"][0]["quantity"]
+    )
+
+
+def test_config_change_marks_rebuild_required_without_mixing_old_state(
+    tmp_path, monkeypatch
+):
+    patch_supertrend(monkeypatch, {101: ["out", "in", "in", "in"]})
+    provider = Provider()
+    provider.values = {
+        "SIGNAL": marker_bars(101, 4),
+        "EXEC": bars([10, 11, 12, 13]),
+    }
+    initial_config_value = configuration(super_enabled=True, sma_enabled=False)
+    initial_config = validate_config(initial_config_value)
+    first = ScannerEngine(
+        initial_config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan()
+    first_strategy = strategy(first, "daily-supertrend")
+    assert first_strategy["status"] == "current"
+
+    changed_config_value = configuration(super_enabled=True, sma_enabled=False)
+    changed_config_value["strategies"]["dailySuperTrend"]["multiplier"] = 4
+    changed_config = validate_config(changed_config_value)
+    blocked = ScannerEngine(
+        changed_config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan()
+    blocked_strategy = strategy(blocked, "daily-supertrend")
+    assert blocked["scanner"]["status"] == "rebuild_required"
+    assert blocked_strategy["status"] == "rebuild_required"
+    assert blocked_strategy["events"] == first_strategy["events"]
+    assert "no new scanner data is mixed" in blocked_strategy["ruleSummary"]
+    state = json.loads((tmp_path / "state" / "model_state_v1.json").read_text())
+    assert state["archivedStrategies"][0]["strategyId"] == "daily-supertrend"
+
+    rebuilt = ScannerEngine(
+        changed_config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan(rebuild_history=True)
+    rebuilt_strategy = strategy(rebuilt, "daily-supertrend")
+    assert rebuilt["scanner"]["status"] != "rebuild_required"
+    assert rebuilt_strategy["status"] == "current"
+    assert rebuilt_strategy.get("rebuildRequired") is not True
+
+
+def test_atomic_snapshot_writer_replaces_complete_json(tmp_path):
+    target = tmp_path / "multi_strategy_v1.json"
+    atomic_write_json(target, {"schemaVersion": "multi_strategy_v1", "value": 1})
+    atomic_write_json(target, {"schemaVersion": "multi_strategy_v1", "value": 2})
+    assert json.loads(target.read_text())["value"] == 2
+    assert not list(tmp_path.glob("*.tmp"))

@@ -114,6 +114,8 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
       NODE_ENV: "test",
       PORT: String(port),
       PRIVATE_DATA_DIR: privateData,
+      SCANNER_CONFIG_DIR: path.join(privateData, "scanner-config"),
+      SCANNER_OUTPUT_DIR: path.join(privateData, "scanner-output"),
       RISKY_INVESTOR_USERNAME_FILE: usernameFile,
       RISKY_INVESTOR_PASSWORD_HASH_FILE: passwordHashFile,
       SESSION_SECRET_FILE: sessionSecretFile,
@@ -177,6 +179,15 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
     assert.equal(initialDashboard.signalEvents.events.length, 0);
     assert.equal(initialDashboard.scannerImport.status, "awaiting");
     assert.equal(initialDashboard.latestPortfolioSnapshot, null);
+    assert.equal(initialDashboard.strategyMonitor.source, "awaiting");
+    assert.equal(
+      initialDashboard.strategyConfiguration.strategies.dailySuperTrend.enabled,
+      false,
+    );
+    assert.equal(
+      initialDashboard.strategyConfiguration.strategies.nasdaqSma200.enabled,
+      false,
+    );
     assert.equal(initialDashboard.notifications.providers.discord.configured, false);
     assert.equal(initialDashboard.notifications.providers.discord.available, true);
     assert.equal(
@@ -184,6 +195,71 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
       false,
     );
     assert.ok(initialDashboard.dailyPL);
+
+    const strategyConfiguration = structuredClone(
+      initialDashboard.strategyConfiguration,
+    );
+    strategyConfiguration.strategies.dailySuperTrend.watchlist.push({
+      signalTicker: "SPY.US",
+      executionTicker: "3USL.UK",
+      enabled: true,
+      allocationWeight: 1,
+    });
+    strategyConfiguration.strategies.dailySuperTrend.enabled = true;
+
+    response = await fetch(`${baseUrl}/api/strategy-configuration`, {
+      method: "PUT",
+      headers: {
+        ...authenticatedHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(strategyConfiguration),
+    });
+    assert.equal(response.status, 403);
+
+    const invalidStrategyConfiguration = structuredClone(
+      initialDashboard.strategyConfiguration,
+    );
+    invalidStrategyConfiguration.strategies.dailySuperTrend.enabled = true;
+    response = await fetch(`${baseUrl}/api/strategy-configuration`, {
+      method: "PUT",
+      headers: {
+        ...authenticatedHeaders,
+        "content-type": "application/json",
+        "x-csrf-token": session.csrfToken,
+      },
+      body: JSON.stringify(invalidStrategyConfiguration),
+    });
+    assert.equal(response.status, 400);
+    assert.match((await json(response)).error, /watchlist row/i);
+
+    response = await fetch(`${baseUrl}/api/strategy-configuration`, {
+      method: "PUT",
+      headers: {
+        ...authenticatedHeaders,
+        "content-type": "application/json",
+        "x-csrf-token": session.csrfToken,
+      },
+      body: JSON.stringify(strategyConfiguration),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(
+      (await json(response)).strategies.dailySuperTrend.enabled,
+      true,
+    );
+    assert.equal(
+      JSON.parse(
+        await readFile(
+          path.join(
+            privateData,
+            "scanner-config",
+            "strategy_config_v1.json",
+          ),
+          "utf8",
+        ),
+      ).strategies.dailySuperTrend.watchlist[0].executionTicker,
+      "3USL.UK",
+    );
 
     const webhook =
       "https://discord.com/api/webhooks/123456/integration-private-token";
@@ -263,6 +339,7 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
 
     const tradeInput = {
       strategyName: "UK Nasdaq SMA200",
+      sleeve: "SMA200 Regime",
       assetName: "Nasdaq 100 3x",
       ticker: "qqq3.l",
       direction: "long",
@@ -302,6 +379,7 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
     assert.equal(trade.riskTier, "CORE");
     assert.equal(trade.leverageMultiplier, 1);
     assert.equal(trade.journal.followedSystem, false);
+    assert.equal(trade.sleeve, "SMA200 Regime");
 
     response = await fetch(
       `${baseUrl}/api/signal-decisions/sig-20260617-smh`,
@@ -383,6 +461,7 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
       body: JSON.stringify({ ...tradeInput, ticker: "qqq3.l", currentPrice: 115 }),
     });
     assert.equal(response.status, 200);
+    assert.equal((await json(response)).sleeve, "SMA200 Regime");
 
     response = await fetch(`${baseUrl}/api/manual-trades/${trade.id}/exits`, {
       method: "POST",
@@ -763,3 +842,85 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
     await rm(privateData, { recursive: true, force: true });
   }
 });
+
+test("strategy configuration permits admins and rejects non-admin users", async () => {
+  for (const role of ["user", "admin"]) {
+    const privateData = await mkdtemp(
+      path.join(os.tmpdir(), `risky-strategy-role-${role}-`),
+    );
+    const port = await availablePort();
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const username = `${role}-integration-user`;
+    const password = "correct horse battery staple";
+    const usernameFile = path.join(privateData, "test-username");
+    const passwordHashFile = path.join(privateData, "test-password-hash");
+    const sessionSecretFile = path.join(privateData, "test-session-secret");
+    await seedDemoRuntimeData(privateData, { username, role });
+    await Promise.all([
+      writeFile(usernameFile, username, "utf8"),
+      writeFile(passwordHashFile, passwordHash(password), "utf8"),
+      writeFile(
+        sessionSecretFile,
+        "integration-test-secret-that-is-longer-than-32-characters",
+        "utf8",
+      ),
+    ]);
+    const child = spawn(process.execPath, ["dist-server/index.js"], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        NODE_ENV: "test",
+        PORT: String(port),
+        PRIVATE_DATA_DIR: privateData,
+        SCANNER_CONFIG_DIR: path.join(privateData, "scanner-config"),
+        SCANNER_OUTPUT_DIR: path.join(privateData, "scanner-output"),
+        RISKY_INVESTOR_ROLE: role,
+        RISKY_INVESTOR_USERNAME_FILE: usernameFile,
+        RISKY_INVESTOR_PASSWORD_HASH_FILE: passwordHashFile,
+        SESSION_SECRET_FILE: sessionSecretFile,
+        RISKY_INVESTOR_CREDENTIAL_ENCRYPTION_KEY:
+          "integration-test-credential-encryption-key-at-least-32-bytes",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    try {
+      await waitForServer(child);
+      const login = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      assert.equal(login.status, 200);
+      const session = await login.json();
+      const cookie = login.headers.get("set-cookie")?.split(";")[0];
+      const dashboardResponse = await fetch(`${baseUrl}/api/dashboard`, {
+        headers: { cookie },
+      });
+      assert.equal(dashboardResponse.status, 200);
+      const dashboard = await dashboardResponse.json();
+
+      const response = await fetch(
+        `${baseUrl}/api/strategy-configuration`,
+        {
+          method: "PUT",
+          headers: {
+            cookie,
+            "content-type": "application/json",
+            "x-csrf-token": session.csrfToken,
+          },
+          body: JSON.stringify(dashboard.strategyConfiguration),
+        },
+      );
+      assert.equal(response.status, role === "admin" ? 200 : 403);
+    } finally {
+      child.kill();
+      if (child.exitCode === null) {
+        await Promise.race([
+          once(child, "exit"),
+          new Promise((resolve) => setTimeout(resolve, 2_000)),
+        ]);
+      }
+      await rm(privateData, { recursive: true, force: true });
+    }
+  }
+}
