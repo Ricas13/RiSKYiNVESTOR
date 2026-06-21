@@ -12,6 +12,37 @@ export type StrategyEventType =
   | "weeklySummary"
   | "scannerError";
 
+export type TickerCatalogueCategory =
+  | "Nasdaq reference"
+  | "UK leveraged Nasdaq"
+  | "UK broad equity ETF"
+  | "UK bond/cash-like/risk-off"
+  | "Other watchlist";
+
+export interface TickerCatalogueEntry {
+  entryId: string;
+  label: string;
+  symbol: string;
+  marketDataSymbol: string;
+  category: TickerCatalogueCategory;
+  notes: string;
+  enabled: boolean;
+}
+
+export interface StrategyConfigurationPreset {
+  presetId: string;
+  strategy: "nasdaqSma200" | "dailySuperTrend";
+  name: string;
+  description: string;
+  warning: string;
+  configuration: StrategyConfiguration;
+}
+
+export interface StrategyConfigurationResources {
+  presets: StrategyConfigurationPreset[];
+  tickerCatalogue: TickerCatalogueEntry[];
+}
+
 export interface StrategyConfiguration {
   version: 1;
   marketData: {
@@ -52,6 +83,7 @@ export interface StrategyConfiguration {
       annualInstrumentCostPercent: number;
     };
   };
+  resources?: StrategyConfigurationResources;
 }
 
 export const defaultStrategyConfiguration: StrategyConfiguration = {
@@ -383,6 +415,169 @@ export function validateStrategyConfiguration(
   };
 }
 
+const presetWarning = "Review tickers and enable the strategy only when ready.";
+
+function presetConfiguration(
+  configure: (configuration: StrategyConfiguration) => void,
+) {
+  const configuration = structuredClone(defaultStrategyConfiguration);
+  configure(configuration);
+  return validateStrategyConfiguration(configuration);
+}
+
+export const strategyTickerCatalogue: TickerCatalogueEntry[] = [
+  {
+    entryId: "nasdaq-100-etf-reference-example",
+    label: "Example Nasdaq 100 ETF reference",
+    symbol: "QQQ",
+    marketDataSymbol: "QQQ.US",
+    category: "Nasdaq reference",
+    notes:
+      "Template reference ticker only. Verify market-data coverage before enabling any strategy.",
+    enabled: true,
+  },
+  {
+    entryId: "nasdaq-100-index-reference-example",
+    label: "Example Nasdaq 100 index reference",
+    symbol: "NDX",
+    marketDataSymbol: "^NDX",
+    category: "Nasdaq reference",
+    notes:
+      "Template index reference only. Some market-data providers may use a different symbol.",
+    enabled: true,
+  },
+  {
+    entryId: "uk-leveraged-nasdaq-3x-example",
+    label: "Example UK 3x Nasdaq instrument",
+    symbol: "QQQ3",
+    marketDataSymbol: "QQQ3.UK",
+    category: "UK leveraged Nasdaq",
+    notes:
+      "Editable high-risk risk-on template. This is not investment advice.",
+    enabled: true,
+  },
+  {
+    entryId: "uk-broad-equity-etf-example",
+    label: "Example UK broad equity ETF",
+    symbol: "VWRP",
+    marketDataSymbol: "VWRP.UK",
+    category: "UK broad equity ETF",
+    notes:
+      "Editable broad-equity example for watchlist testing and mapping review.",
+    enabled: true,
+  },
+  {
+    entryId: "uk-risk-off-cash-like-example",
+    label: "Example UK cash-like/risk-off instrument",
+    symbol: "CSH2",
+    marketDataSymbol: "CSH2.UK",
+    category: "UK bond/cash-like/risk-off",
+    notes:
+      "Editable risk-off example. Leave risk-off mode as cash unless an instrument has been verified.",
+    enabled: true,
+  },
+  {
+    entryId: "watchlist-sp500-reference-example",
+    label: "Example S&P 500 watchlist signal",
+    symbol: "SPY",
+    marketDataSymbol: "SPY.US",
+    category: "Other watchlist",
+    notes:
+      "Editable watchlist signal example. Confirm the execution ticker before enabling a row.",
+    enabled: true,
+  },
+  {
+    entryId: "watchlist-uk-execution-example",
+    label: "Example UK execution mapping",
+    symbol: "3USL",
+    marketDataSymbol: "3USL.UK",
+    category: "Other watchlist",
+    notes:
+      "Editable execution-ticker example for SuperTrend mapping review.",
+    enabled: true,
+  },
+];
+
+export const strategyConfigurationPresets: StrategyConfigurationPreset[] = [
+  {
+    presetId: "nasdaq-sma-regime-3x",
+    strategy: "nasdaqSma200",
+    name: "Nasdaq SMA Regime — 3x",
+    description:
+      "Template for Nasdaq 100 SMA regime tracking using a UK-accessible risk-on instrument. Review all tickers before enabling.",
+    warning: presetWarning,
+    configuration: presetConfiguration((configuration) => {
+      configuration.strategies.nasdaqSma200 = {
+        enabled: false,
+        referenceTicker: "QQQ.US",
+        riskOnTicker: "QQQ3.UK",
+        riskOffMode: "cash",
+        riskOffTicker: "",
+        smaLength: 200,
+        reviewCadence: "daily",
+        riskOnThresholdPercent: 0,
+        riskOffThresholdPercent: 0,
+        modelStartingCapital: 10_000,
+        transactionCostPercent: 0.1,
+        annualInstrumentCostPercent: 0,
+      };
+    }),
+  },
+  {
+    presetId: "daily-supertrend-watchlist-template",
+    strategy: "dailySuperTrend",
+    name: "Daily SuperTrend watchlist template",
+    description:
+      "Template for daily SuperTrend virtual tracking. Review each ticker mapping before enabling.",
+    warning: presetWarning,
+    configuration: presetConfiguration((configuration) => {
+      configuration.strategies.dailySuperTrend = {
+        enabled: false,
+        timeframe: "1d",
+        atrPeriod: 10,
+        multiplier: 3,
+        modelStartingCapital: 10_000,
+        allocationPolicy: "equal_weight",
+        maximumConcurrentPositions: 5,
+        transactionCostPercent: 0.1,
+        watchlist: [
+          {
+            signalTicker: "SPY.US",
+            executionTicker: "3USL.UK",
+            enabled: false,
+            allocationWeight: 1,
+          },
+          {
+            signalTicker: "QQQ.US",
+            executionTicker: "QQQ3.UK",
+            enabled: false,
+            allocationWeight: 1,
+          },
+        ],
+      };
+    }),
+  },
+];
+
+export function strategyConfigurationResources(): StrategyConfigurationResources {
+  return {
+    presets: strategyConfigurationPresets.map((preset) => ({
+      ...preset,
+      configuration: structuredClone(preset.configuration),
+    })),
+    tickerCatalogue: strategyTickerCatalogue.map((entry) => ({ ...entry })),
+  };
+}
+
+function withStrategyConfigurationResources(
+  configuration: StrategyConfiguration,
+): StrategyConfiguration {
+  return {
+    ...configuration,
+    resources: strategyConfigurationResources(),
+  };
+}
+
 export class StrategyConfigurationRepository {
   private readonly store: JsonStore;
   private readonly filename = "strategy_config_v1.json";
@@ -400,14 +595,16 @@ export class StrategyConfigurationRepository {
   async read() {
     const value =
       await this.store.readOptional<StrategyConfiguration>(this.filename);
-    return value
-      ? validateStrategyConfiguration(value)
-      : structuredClone(defaultStrategyConfiguration);
+    return withStrategyConfigurationResources(
+      value
+        ? validateStrategyConfiguration(value)
+        : structuredClone(defaultStrategyConfiguration),
+    );
   }
 
   async update(value: unknown) {
     const configuration = validateStrategyConfiguration(value);
     await this.store.write(this.filename, configuration);
-    return configuration;
+    return withStrategyConfigurationResources(configuration);
   }
 }

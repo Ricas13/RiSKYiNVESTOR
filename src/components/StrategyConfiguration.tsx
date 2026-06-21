@@ -1,6 +1,20 @@
-import { Plus, Save, Settings2, Trash2 } from "lucide-react";
+import {
+  Copy,
+  ListPlus,
+  Plus,
+  RotateCcw,
+  Save,
+  Settings2,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useState } from "react";
-import type { StrategyConfiguration as StrategyConfigurationValue } from "../types";
+import type {
+  StrategyConfiguration as StrategyConfigurationValue,
+  StrategyConfigurationPreset,
+  StrategyConfigurationResources,
+  TickerCatalogueCategory,
+  TickerCatalogueEntry,
+} from "../types";
 import { Badge } from "./ui";
 
 type Mutate = (
@@ -8,6 +22,20 @@ type Mutate = (
   method: "POST" | "PUT" | "DELETE",
   body?: unknown,
 ) => Promise<unknown>;
+
+const emptyResources: StrategyConfigurationResources = {
+  presets: [],
+  tickerCatalogue: [],
+};
+
+const tickerPattern = /^[A-Z0-9.^=_/-]+$/;
+const catalogueCategories: TickerCatalogueCategory[] = [
+  "Nasdaq reference",
+  "UK leveraged Nasdaq",
+  "UK broad equity ETF",
+  "UK bond/cash-like/risk-off",
+  "Other watchlist",
+];
 
 export function StrategyConfiguration({
   configuration,
@@ -19,14 +47,34 @@ export function StrategyConfiguration({
   mutate: Mutate;
 }) {
   const [draft, setDraft] = useState(() => structuredClone(configuration));
+  const [quickTickerId, setQuickTickerId] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [templateWarning, setTemplateWarning] = useState("");
   const dirty = JSON.stringify(draft) !== JSON.stringify(configuration);
   const superTrend = draft.strategies.dailySuperTrend;
   const sma = draft.strategies.nasdaqSma200;
+  const resources = configuration.resources ?? emptyResources;
+  const enabledCatalogue = resources.tickerCatalogue.filter(
+    (entry) => entry.enabled,
+  );
+  const nasdaqPreset = resources.presets.find(
+    (preset) => preset.strategy === "nasdaqSma200",
+  );
+  const superTrendPreset = resources.presets.find(
+    (preset) => preset.strategy === "dailySuperTrend",
+  );
 
   useEffect(() => {
     setDraft(structuredClone(configuration));
+    setTemplateWarning("");
+    setQuickTickerId(
+      (current) =>
+        current ||
+        configuration.resources?.tickerCatalogue.find((entry) => entry.enabled)
+          ?.entryId ||
+        "",
+    );
   }, [configuration]);
 
   useEffect(() => {
@@ -79,6 +127,83 @@ export function StrategyConfiguration({
     });
   }
 
+  function loadPreset(preset: StrategyConfigurationPreset | undefined) {
+    if (!preset) return;
+    const confirmed = window.confirm(
+      `Replace the current ${preset.name} form values with this preset? Your saved configuration will not change until you press Save.`,
+    );
+    if (!confirmed) return;
+    setDraft((current) => {
+      const next = structuredClone(current);
+      if (preset.strategy === "dailySuperTrend") {
+        next.strategies.dailySuperTrend = {
+          ...preset.configuration.strategies.dailySuperTrend,
+          enabled: false,
+          watchlist:
+            preset.configuration.strategies.dailySuperTrend.watchlist.map(
+              (row) => ({ ...row, enabled: false }),
+            ),
+        };
+      } else {
+        next.strategies.nasdaqSma200 = {
+          ...preset.configuration.strategies.nasdaqSma200,
+          enabled: false,
+        };
+      }
+      return next;
+    });
+    setMessage("");
+    setTemplateWarning(preset.warning);
+  }
+
+  function addWatchlistRow(
+    row: StrategyConfigurationValue["strategies"]["dailySuperTrend"]["watchlist"][number],
+  ) {
+    updateSuperTrend({
+      watchlist: [...superTrend.watchlist, row],
+    });
+  }
+
+  function addCatalogueTicker() {
+    const entry =
+      enabledCatalogue.find((item) => item.entryId === quickTickerId) ||
+      enabledCatalogue[0];
+    if (!entry) {
+      setMessage("No catalogue ticker is available yet.");
+      return;
+    }
+    addWatchlistRow({
+      signalTicker: entry.marketDataSymbol.toUpperCase(),
+      executionTicker: entry.marketDataSymbol.toUpperCase(),
+      enabled: false,
+      allocationWeight: 1,
+    });
+    setMessage(`${entry.label} added as a disabled SuperTrend row.`);
+  }
+
+  function duplicateWatchlistRow(index: number) {
+    const row = superTrend.watchlist[index];
+    updateSuperTrend({
+      watchlist: [
+        ...superTrend.watchlist.slice(0, index + 1),
+        { ...row, enabled: false },
+        ...superTrend.watchlist.slice(index + 1),
+      ],
+    });
+  }
+
+  function resetDraft() {
+    if (
+      dirty &&
+      !window.confirm("Reset the form to the last saved strategy configuration?")
+    ) {
+      return;
+    }
+    setDraft(structuredClone(configuration));
+    setTemplateWarning("");
+    setMessage("");
+  }
+
   async function save() {
     setBusy(true);
     setMessage("");
@@ -101,8 +226,9 @@ export function StrategyConfiguration({
         <div>
           <h2>Strategy Configuration</h2>
           <p>
-            Configure the two independent virtual strategies. Both remain
-            disabled until their inputs are valid and they are explicitly enabled.
+            Set up ticker pairs and read-only strategy templates from Settings.
+            Review every signal/execution ticker before enabling; presets and
+            new rows stay disabled by default.
           </p>
         </div>
         <Badge
@@ -119,10 +245,78 @@ export function StrategyConfiguration({
       )}
 
       <fieldset disabled={!canManage || busy}>
+        <div className="strategy-config__quick-setup">
+          <div>
+            <h3>Quick setup</h3>
+            <p>
+              Load strategy templates or add ticker-pair catalogue examples here
+              in Settings. Nothing is enabled automatically; review each ticker
+              before turning a strategy or row on.
+            </p>
+          </div>
+          <div className="strategy-config__quick-actions">
+            <button
+              type="button"
+              className="button button--secondary"
+              disabled={!nasdaqPreset}
+              onClick={() => loadPreset(nasdaqPreset)}
+            >
+              <ListPlus size={15} /> Load Nasdaq SMA template
+            </button>
+            <button
+              type="button"
+              className="button button--secondary"
+              disabled={!superTrendPreset}
+              onClick={() => loadPreset(superTrendPreset)}
+            >
+              <ListPlus size={15} /> Load Daily SuperTrend template
+            </button>
+            <label className="field strategy-config__catalogue-select">
+              <span>Catalogue ticker</span>
+              <select
+                value={quickTickerId}
+                onChange={(event) => setQuickTickerId(event.target.value)}
+              >
+                {enabledCatalogue.length === 0 && (
+                  <option value="">Catalogue unavailable</option>
+                )}
+                {enabledCatalogue.map((entry) => (
+                  <option key={entry.entryId} value={entry.entryId}>
+                    {entry.label} · {entry.symbol} → {entry.marketDataSymbol}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={addCatalogueTicker}
+            >
+              <Plus size={15} /> Add ticker from catalogue
+            </button>
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={resetDraft}
+            >
+              <RotateCcw size={15} /> Reset current form
+            </button>
+          </div>
+          {templateWarning && (
+            <p className="strategy-config__warning">{templateWarning}</p>
+          )}
+          {canManage && resources.presets.length === 0 && (
+            <p className="settings-note">
+              Strategy presets are not available in the current dashboard
+              payload.
+            </p>
+          )}
+        </div>
+
         <div className="strategy-config__header">
           <div>
             <h3>Daily SuperTrend</h3>
-            <p>Multi-ticker virtual strategy book.</p>
+            <p>Ticker-pair setup for the virtual SuperTrend model.</p>
           </div>
           <label className="toggle-row">
             <span>Enable strategy</span>
@@ -201,26 +395,21 @@ export function StrategyConfiguration({
 
         <div className="strategy-config__watchlist-heading">
           <div>
-            <h4>SuperTrend watchlist mappings</h4>
+            <h4>SuperTrend ticker-pair mappings</h4>
             <p>
-              No ticker mapping is assumed. Add the signal and UK execution
-              tickers you have verified.
+              Choose catalogue tickers or type custom signal and execution
+              tickers. Rows stay disabled until you explicitly enable them.
             </p>
           </div>
           <button
             type="button"
             className="button button--secondary"
             onClick={() =>
-              updateSuperTrend({
-                watchlist: [
-                  ...superTrend.watchlist,
-                  {
-                    signalTicker: "",
-                    executionTicker: "",
-                    enabled: false,
-                    allocationWeight: 1,
-                  },
-                ],
+              addWatchlistRow({
+                signalTicker: "",
+                executionTicker: "",
+                enabled: false,
+                allocationWeight: 1,
               })
             }
           >
@@ -236,7 +425,7 @@ export function StrategyConfiguration({
                 <th>Signal ticker</th>
                 <th>UK execution ticker</th>
                 <th>Weight</th>
-                <th>Remove</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -245,72 +434,94 @@ export function StrategyConfiguration({
                   <td colSpan={5}>No watchlist mapping configured.</td>
                 </tr>
               )}
-              {superTrend.watchlist.map((row, index) => (
-                <tr key={`${index}-${row.signalTicker}-${row.executionTicker}`}>
-                  <td>
-                    <input
-                      aria-label={`Enable watchlist row ${index + 1}`}
-                      type="checkbox"
-                      checked={row.enabled}
-                      onChange={(event) =>
-                        updateWatchlist(index, { enabled: event.target.checked })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <input
-                      aria-label={`Signal ticker ${index + 1}`}
-                      value={row.signalTicker}
-                      onChange={(event) =>
-                        updateWatchlist(index, {
-                          signalTicker: event.target.value.toUpperCase(),
-                        })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <input
-                      aria-label={`Execution ticker ${index + 1}`}
-                      value={row.executionTicker}
-                      onChange={(event) =>
-                        updateWatchlist(index, {
-                          executionTicker: event.target.value.toUpperCase(),
-                        })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <input
-                      aria-label={`Allocation weight ${index + 1}`}
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={row.allocationWeight}
-                      onChange={(event) =>
-                        updateWatchlist(index, {
-                          allocationWeight: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label={`Remove watchlist row ${index + 1}`}
-                      onClick={() =>
-                        updateSuperTrend({
-                          watchlist: superTrend.watchlist.filter(
-                            (_, rowIndex) => rowIndex !== index,
-                          ),
-                        })
-                      }
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {superTrend.watchlist.map((row, index) => {
+                const signalError = tickerError(
+                  row.signalTicker,
+                  row.enabled || superTrend.enabled,
+                );
+                const executionError = tickerError(
+                  row.executionTicker,
+                  row.enabled || superTrend.enabled,
+                );
+                return (
+                  <tr key={`${index}-${row.signalTicker}-${row.executionTicker}`}>
+                    <td>
+                      <input
+                        aria-label={`Enable watchlist row ${index + 1}`}
+                        type="checkbox"
+                        checked={row.enabled}
+                        onChange={(event) =>
+                          updateWatchlist(index, {
+                            enabled: event.target.checked,
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <TickerPicker
+                        label={`Signal ticker ${index + 1}`}
+                        value={row.signalTicker}
+                        catalogue={enabledCatalogue}
+                        error={signalError}
+                        onChange={(signalTicker) =>
+                          updateWatchlist(index, { signalTicker })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <TickerPicker
+                        label={`Execution ticker ${index + 1}`}
+                        value={row.executionTicker}
+                        catalogue={enabledCatalogue}
+                        error={executionError}
+                        onChange={(executionTicker) =>
+                          updateWatchlist(index, { executionTicker })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        aria-label={`Allocation weight ${index + 1}`}
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={row.allocationWeight}
+                        onChange={(event) =>
+                          updateWatchlist(index, {
+                            allocationWeight: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <div className="strategy-config__row-actions">
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Duplicate watchlist row ${index + 1}`}
+                          onClick={() => duplicateWatchlistRow(index)}
+                        >
+                          <Copy size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Remove watchlist row ${index + 1}`}
+                          onClick={() =>
+                            updateSuperTrend({
+                              watchlist: superTrend.watchlist.filter(
+                                (_, rowIndex) => rowIndex !== index,
+                              ),
+                            })
+                          }
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -318,7 +529,7 @@ export function StrategyConfiguration({
         <div className="strategy-config__header">
           <div>
             <h3>Nasdaq SMA200 Regime — 3x</h3>
-            <p>Independent risk-on/risk-off virtual portfolio.</p>
+            <p>Ticker-pair setup for the SMA200 regime template.</p>
           </div>
           <label className="toggle-row">
             <span>Enable strategy</span>
@@ -331,20 +542,28 @@ export function StrategyConfiguration({
           </label>
         </div>
 
+        <p className="strategy-config__helper">
+          The reference ticker drives the SMA200 signal; the risk-on/risk-off
+          tickers are execution instruments the virtual model would track after
+          you review and enable the template.
+        </p>
+
         <div className="settings-field-grid strategy-config__fields">
-          <TextField
+          <TickerPicker
             label="Reference ticker"
             value={sma.referenceTicker}
-            onChange={(referenceTicker) =>
-              updateSma({ referenceTicker: referenceTicker.toUpperCase() })
-            }
+            catalogue={enabledCatalogue}
+            categories={["Nasdaq reference", "Other watchlist"]}
+            error={tickerError(sma.referenceTicker, sma.enabled)}
+            onChange={(referenceTicker) => updateSma({ referenceTicker })}
           />
-          <TextField
+          <TickerPicker
             label="UK risk-on 3x ticker"
             value={sma.riskOnTicker}
-            onChange={(riskOnTicker) =>
-              updateSma({ riskOnTicker: riskOnTicker.toUpperCase() })
-            }
+            catalogue={enabledCatalogue}
+            categories={["UK leveraged Nasdaq", "Other watchlist"]}
+            error={tickerError(sma.riskOnTicker, sma.enabled)}
+            onChange={(riskOnTicker) => updateSma({ riskOnTicker })}
           />
           <label className="field">
             <span>Risk-off mode</span>
@@ -353,6 +572,8 @@ export function StrategyConfiguration({
               onChange={(event) =>
                 updateSma({
                   riskOffMode: event.target.value as "cash" | "instrument",
+                  riskOffTicker:
+                    event.target.value === "cash" ? "" : sma.riskOffTicker,
                 })
               }
             >
@@ -360,13 +581,20 @@ export function StrategyConfiguration({
               <option value="instrument">Instrument</option>
             </select>
           </label>
-          <TextField
-            label="Risk-off ticker"
-            value={sma.riskOffTicker}
-            onChange={(riskOffTicker) =>
-              updateSma({ riskOffTicker: riskOffTicker.toUpperCase() })
-            }
-          />
+          {sma.riskOffMode === "instrument" && (
+            <TickerPicker
+              label="Risk-off ticker"
+              value={sma.riskOffTicker}
+              catalogue={enabledCatalogue}
+              categories={[
+                "UK bond/cash-like/risk-off",
+                "UK broad equity ETF",
+                "Other watchlist",
+              ]}
+              error={tickerError(sma.riskOffTicker, sma.enabled)}
+              onChange={(riskOffTicker) => updateSma({ riskOffTicker })}
+            />
+          )}
           <NumberField
             label="SMA length (SMA200)"
             value={sma.smaLength}
@@ -448,6 +676,84 @@ export function StrategyConfiguration({
         </button>
       </div>
     </section>
+  );
+}
+
+function tickerError(value: string, required: boolean) {
+  const ticker = value.trim().toUpperCase();
+  if (required && !ticker) return "Ticker is required before enabling.";
+  if (ticker && !tickerPattern.test(ticker)) {
+    return "Use letters, numbers, '.', '^', '=', '_', '/', or '-'.";
+  }
+  return "";
+}
+
+function TickerPicker({
+  label,
+  value,
+  catalogue,
+  categories,
+  error,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  catalogue: TickerCatalogueEntry[];
+  categories?: TickerCatalogueCategory[];
+  error?: string;
+  onChange: (value: string) => void;
+}) {
+  const filteredCatalogue = categories
+    ? catalogue.filter((entry) => categories.includes(entry.category))
+    : catalogue;
+  const selectedEntry =
+    filteredCatalogue.find(
+      (entry) =>
+        entry.marketDataSymbol.toUpperCase() === value.trim().toUpperCase(),
+    )?.entryId ?? "";
+
+  return (
+    <div className={`field ticker-picker ${error ? "field--error" : ""}`}>
+      <span>{label}</span>
+      <select
+        aria-label={`${label} catalogue`}
+        value={selectedEntry}
+        onChange={(event) => {
+          const entry = filteredCatalogue.find(
+            (item) => item.entryId === event.target.value,
+          );
+          if (entry) onChange(entry.marketDataSymbol.toUpperCase());
+        }}
+      >
+        <option value="">Choose from catalogue</option>
+        {catalogueCategories.map((category) => {
+          const entries = filteredCatalogue.filter(
+            (entry) => entry.category === category,
+          );
+          if (!entries.length) return null;
+          return (
+            <optgroup key={category} label={category}>
+              {entries.map((entry) => (
+                <option key={entry.entryId} value={entry.entryId}>
+                  {entry.label} · {entry.symbol} → {entry.marketDataSymbol}
+                </option>
+              ))}
+            </optgroup>
+          );
+        })}
+      </select>
+      <input
+        aria-label={`${label} custom ticker`}
+        placeholder="Or type custom ticker"
+        value={value}
+        onChange={(event) => onChange(event.target.value.toUpperCase())}
+      />
+      <small>
+        Display and market-data symbols can differ; save the market-data ticker
+        the scanner should read.
+      </small>
+      {error && <small className="field-error">{error}</small>}
+    </div>
   );
 }
 
