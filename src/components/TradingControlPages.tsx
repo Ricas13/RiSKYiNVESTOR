@@ -296,7 +296,7 @@ function TradeJournalPage({
       />
       <ManualTrades
         trades={data.manualTrades.trades}
-        strategies={data.strategies.strategies}
+        strategyMonitor={data.strategyMonitor}
         isExample={data.manualTrades.isExample}
         mutate={mutate}
       />

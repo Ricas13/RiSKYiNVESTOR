@@ -4,6 +4,7 @@ import App from "./App";
 import "./index.css";
 import "./appearance.css";
 import "./dashboardCommandCentre.css";
+import "./tradeJournalSignalActions.css";
 import "./strategyMonitor.css";
 import "./strategyConfiguration.css";
 import "./strategyPolicies.css";
