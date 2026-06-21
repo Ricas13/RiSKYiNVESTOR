@@ -17,11 +17,16 @@ import {
   YAxis,
 } from "recharts";
 import type {
+  ModelPerformanceWarning,
   MultiStrategyRecord,
   MultiStrategyPublicState,
   StrategyId,
 } from "../types";
 import { formatDateTime, formatMoney, formatNumber } from "../utils/format";
+import {
+  affectedTickerText,
+  collectStrategyPerformanceWarnings,
+} from "../utils/modelWarnings";
 import { Badge } from "./ui";
 
 type MonitorTab = "all" | StrategyId;
@@ -204,6 +209,7 @@ function MonitorHeading({
 
 function StrategySection({ strategy }: { strategy: MultiStrategyRecord }) {
   const latestEvent = strategy.latestEvent;
+  const warnings = collectStrategyPerformanceWarnings(strategy);
   return (
     <section className="strategy-monitor__section">
       <div className="strategy-monitor__title">
@@ -229,6 +235,8 @@ function StrategySection({ strategy }: { strategy: MultiStrategyRecord }) {
             : "not available"}
         </p>
       </div>
+
+      {warnings.length > 0 && <ModelWarningBanner warnings={warnings} />}
 
       <div className="strategy-monitor__metrics">
         <MonitorMetric
@@ -392,6 +400,32 @@ function MonitorMetric({
   );
 }
 
+function ModelWarningBanner({
+  warnings,
+}: {
+  warnings: ModelPerformanceWarning[];
+}) {
+  return (
+    <div className="strategy-monitor__warning" role="alert">
+      <ShieldAlert size={18} />
+      <div>
+        <strong>Model performance needs review</strong>
+        <p>
+          Signal state may still be valid, but model returns/P&amp;L should be
+          reviewed before relying on them.
+        </p>
+        <ul>
+          {warnings.slice(0, 5).map((warning, index) => (
+            <li key={`${warning.code}-${index}`}>
+              <span>{affectedTickerText(warning)}:</span> {warning.message}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function VirtualPositions({ strategy }: { strategy: MultiStrategyRecord }) {
   return (
     <article className="control-panel">
@@ -414,6 +448,7 @@ function VirtualPositions({ strategy }: { strategy: MultiStrategyRecord }) {
                 <th>State</th>
                 <th>Allocation</th>
                 <th>Open P/L</th>
+                <th>Warnings</th>
                 <th>Reason</th>
               </tr>
             </thead>
@@ -429,6 +464,11 @@ function VirtualPositions({ strategy }: { strategy: MultiStrategyRecord }) {
                   <td>
                     {formatMoney(position.openPnlValue)} ·{" "}
                     {formatNumber(position.openPnlPercent)}%
+                  </td>
+                  <td>
+                    {position.warnings?.length
+                      ? position.warnings.map((warning) => warning.code).join(", ")
+                      : "—"}
                   </td>
                   <td>{position.reason}</td>
                 </tr>

@@ -54,6 +54,18 @@ class ScannerConfig:
     provider: dict[str, Any]
     supertrend: SuperTrendConfig
     sma: SmaConfig
+    sanity: SanityCheckConfig
+
+
+@dataclass(frozen=True)
+class SanityCheckConfig:
+    high_open_pnl_percent: float
+    high_model_return_percent: float
+    extreme_price_ratio: float
+    near_zero_drawdown_percent: float
+    many_trades_threshold: int
+    minimum_execution_history_days: int
+    maximum_data_lag_days: int
 
 
 SUPPORTED_MARKET_DATA_PROVIDERS = {
@@ -360,11 +372,64 @@ def validate_config(value: Any) -> ScannerConfig:
         raise ConfigurationError(
             "Daily SuperTrend cannot be enabled without an enabled watchlist row."
         )
+    sanity_raw = root.get("sanityChecks", {})
+    sanity_source = _object(sanity_raw, "Sanity checks") if sanity_raw else {}
+    sanity = SanityCheckConfig(
+        high_open_pnl_percent=_number(
+            sanity_source.get("highOpenPnlPercent", 500),
+            "High open P/L warning threshold",
+            1,
+            100_000,
+        ),
+        high_model_return_percent=_number(
+            sanity_source.get("highModelReturnPercent", 1000),
+            "High model return warning threshold",
+            1,
+            1_000_000,
+        ),
+        extreme_price_ratio=_number(
+            sanity_source.get("extremePriceRatio", 10),
+            "Extreme price ratio warning threshold",
+            1,
+            1_000_000,
+        ),
+        near_zero_drawdown_percent=_number(
+            sanity_source.get("nearZeroDrawdownPercent", 0.1),
+            "Near-zero drawdown warning threshold",
+            0,
+            100,
+        ),
+        many_trades_threshold=int(
+            _number(
+                sanity_source.get("manyTradesThreshold", 5),
+                "Many trades warning threshold",
+                1,
+                10_000,
+            )
+        ),
+        minimum_execution_history_days=int(
+            _number(
+                sanity_source.get("minimumExecutionHistoryDays", 252),
+                "Minimum execution history warning threshold",
+                1,
+                20_000,
+            )
+        ),
+        maximum_data_lag_days=int(
+            _number(
+                sanity_source.get("maximumDataLagDays", 5),
+                "Maximum data lag warning threshold",
+                0,
+                3650,
+            )
+        ),
+    )
     return ScannerConfig(
         version=1,
         provider=provider_config,
         supertrend=supertrend,
         sma=sma,
+        sanity=sanity,
     )
 
 

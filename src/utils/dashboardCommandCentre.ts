@@ -9,6 +9,7 @@ import {
   buildSignalMonitorModel,
   type Sma200SignalSummary,
 } from "./signalMonitorRows";
+import { collectSnapshotPerformanceWarnings } from "./modelWarnings";
 
 export type DashboardScannerStatus = "current" | "stale" | "error" | "awaiting";
 export type DashboardActionType = "entry" | "exit" | "risk_on" | "risk_off";
@@ -20,6 +21,7 @@ export interface DashboardScannerHealth {
   marketDataFreshness: string | null;
   activeStrategies: number;
   errors: string[];
+  warnings: string[];
 }
 
 export interface DashboardActionItem {
@@ -179,6 +181,9 @@ function buildScannerHealth(data: DashboardData): DashboardScannerHealth {
         !["disabled", "not_configured"].includes(strategy.status),
     ).length,
     errors,
+    warnings: collectSnapshotPerformanceWarnings(snapshot).map(
+      (warning) => warning.message,
+    ),
   };
 }
 

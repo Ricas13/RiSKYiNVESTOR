@@ -333,6 +333,17 @@ function actualTradePanelHtml(html: string) {
   return start >= 0 && end >= 0 ? html.slice(start, end) : "";
 }
 
+const performanceWarning = {
+  severity: "warning" as const,
+  code: "extreme_model_return",
+  message:
+    "Performance warning: this model result may be distorted by leveraged ETP price history or currency units.",
+  affectedTickers: ["QQQ3.L"],
+  metric: "returnPercent",
+  value: 23000,
+  threshold: 1000,
+};
+
 test("dashboard shows scanner current state", () => {
   const html = render(dashboard());
 
@@ -341,6 +352,27 @@ test("dashboard shows scanner current state", () => {
   assert.match(html, /Market data freshness/);
   assert.match(html, /Active strategies/);
   assert.match(html, /2/);
+});
+
+test("dashboard shows model warnings without turning scanner health into an error", () => {
+  const warnedSnapshot = snapshot({
+    scanner: {
+      ...snapshot().scanner,
+      warnings: [{ ...performanceWarning, strategyId: "nasdaq-sma200-3x" }],
+    },
+    strategies: [
+      strategy("daily-supertrend"),
+      strategy("nasdaq-sma200-3x", { warnings: [performanceWarning] }),
+    ],
+  });
+  const model = buildDashboardCommandCentreModel(dashboard(warnedSnapshot));
+  const html = render(dashboard(warnedSnapshot));
+
+  assert.equal(model.scanner.status, "current");
+  assert.equal(model.scanner.warnings.length, 1);
+  assert.match(html, /Performance warning/);
+  assert.match(html, /Signal state may still be valid/);
+  assert.match(html, /Current/);
 });
 
 test("dashboard typography layout still renders command-centre sections", () => {

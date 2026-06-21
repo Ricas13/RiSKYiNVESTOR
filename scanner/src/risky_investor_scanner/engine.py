@@ -5,7 +5,7 @@ from typing import Any
 import hashlib
 import json
 from .calculations import supertrend
-from .config import ScannerConfig, SuperTrendConfig, WatchlistRow
+from .config import SanityCheckConfig, ScannerConfig, SuperTrendConfig, WatchlistRow
 from .market_data import CsvMarketDataProvider, PriceBar
 from .storage import atomic_write_json, read_json
 SUPER_ID = 'daily-supertrend'
@@ -16,7 +16,7 @@ def event_id(strategy_id: str, event_type: str, date_text: str, ticker: str) -> 
     return f'{strategy_id}:{hashlib.sha256(material).hexdigest()[:24]}'
 
 def _empty_strategy(strategy_id: str, name: str, enabled: bool, summary: str, parameters: dict[str, Any], configured: bool=True) -> dict[str, Any]:
-    return {'strategyId': strategy_id, 'name': name, 'enabled': enabled, 'configured': configured, 'status': 'disabled' if not enabled else 'awaiting_data', 'ruleSummary': summary, 'parameters': parameters, 'currentState': 'disabled' if not enabled else 'awaiting_data', 'modelValue': None, 'returnPercent': None, 'drawdownPercent': None, 'exposurePercent': 0, 'equitySnapshots': [], 'virtualPositions': [], 'closedVirtualTrades': [], 'events': [], 'latestEvent': None, 'dataFreshness': None}
+    return {'strategyId': strategy_id, 'name': name, 'enabled': enabled, 'configured': configured, 'status': 'disabled' if not enabled else 'awaiting_data', 'ruleSummary': summary, 'parameters': parameters, 'currentState': 'disabled' if not enabled else 'awaiting_data', 'modelValue': None, 'returnPercent': None, 'drawdownPercent': None, 'exposurePercent': 0, 'equitySnapshots': [], 'virtualPositions': [], 'closedVirtualTrades': [], 'events': [], 'latestEvent': None, 'dataFreshness': None, 'warnings': []}
 
 class ScannerEngine:
 
@@ -71,7 +71,8 @@ class ScannerEngine:
             except ValueError:
                 stale = True
         status = 'error' if has_strategy_errors else 'rebuild_required' if rebuild_required else 'not_configured' if not enabled else 'degraded' if cache_fallbacks else 'stale' if stale else 'current'
-        snapshot = {'schemaVersion': 'multi_strategy_v1', 'generatedAt': generated_at, 'scanner': {'name': 'RiSKYiNVESTOR integrated scanner', 'version': '1.0.0', 'status': status, 'errors': errors, 'dataFreshness': {'generatedAt': latest_freshness or generated_at, 'staleAfterMinutes': 5760}}, 'strategies': strategies}
+        warnings = _scanner_warnings(strategies)
+        snapshot = {'schemaVersion': 'multi_strategy_v1', 'generatedAt': generated_at, 'scanner': {'name': 'RiSKYiNVESTOR integrated scanner', 'version': '1.0.0', 'status': status, 'errors': errors, 'warnings': warnings, 'dataFreshness': {'generatedAt': latest_freshness or generated_at, 'staleAfterMinutes': 5760}}, 'strategies': strategies}
         self._persist(snapshot)
         return snapshot
 
@@ -98,7 +99,7 @@ class ScannerEngine:
         positions = durable.get('positions', [])
         if isinstance(positions, dict):
             positions = list(positions.values())
-        result.update({'status': 'rebuild_required', 'currentState': 'rebuild_required', 'ruleSummary': f"{result['ruleSummary']} {message}", 'modelValue': durable.get('modelValue'), 'returnPercent': durable.get('returnPercent'), 'drawdownPercent': durable.get('drawdownPercent'), 'exposurePercent': durable.get('exposurePercent', 0), 'equitySnapshots': durable.get('equity', []), 'virtualPositions': positions, 'closedVirtualTrades': durable.get('closed', []), 'events': events, 'regimeChangeEvents': durable.get('regimeChangeEvents'), 'latestEvent': events[-1] if events else None, 'dataFreshness': durable.get('dataFreshness'), 'rebuildRequired': True})
+        result.update({'status': 'rebuild_required', 'currentState': 'rebuild_required', 'ruleSummary': f"{result['ruleSummary']} {message}", 'modelValue': durable.get('modelValue'), 'returnPercent': durable.get('returnPercent'), 'drawdownPercent': durable.get('drawdownPercent'), 'exposurePercent': durable.get('exposurePercent', 0), 'equitySnapshots': durable.get('equity', []), 'virtualPositions': positions, 'closedVirtualTrades': durable.get('closed', []), 'events': events, 'regimeChangeEvents': durable.get('regimeChangeEvents'), 'latestEvent': events[-1] if events else None, 'dataFreshness': durable.get('dataFreshness'), 'warnings': durable.get('warnings', []), 'rebuildRequired': True})
         for key in ('cash', 'investedValue'):
             if durable.get(key) is not None:
                 result[key] = durable[key]
@@ -123,9 +124,18 @@ class ScannerEngine:
         transitions: dict[date, list[dict[str, Any]]] = {}
         market_days: set[date] = set()
         freshness: list[str] = []
+        quality_warnings: list[dict[str, Any]] = []
         for row in enabled_rows:
             signal_bars = self._fetch(row.signal_ticker)
             execution_bars = self._fetch(row.execution_ticker)
+            quality_warnings.extend(
+                _market_data_pair_warnings(
+                    row,
+                    signal_bars,
+                    execution_bars,
+                    self.config.sanity,
+                )
+            )
             if signal_bars:
                 freshness.append(signal_bars[-1].day.isoformat())
             if execution_bars:
@@ -146,6 +156,7 @@ class ScannerEngine:
         if not row_data or not market_days:
             if freshness:
                 result['dataFreshness'] = max(freshness)
+            result['warnings'] = _dedupe_warnings(quality_warnings)
             return result
         cash = config.model_starting_capital
         positions: dict[str, dict[str, Any]] = {}
@@ -197,9 +208,23 @@ class ScannerEngine:
         invested = _refresh_supertrend_positions(positions, row_data, sorted(market_days)[-1])
         model_value = cash + invested
         peak = max((item['value'] for item in equity))
-        durable = {'configFingerprint': fingerprint, 'rebuildRequired': False, 'capital': config.model_starting_capital, 'cash': cash, 'investedValue': invested, 'modelValue': model_value, 'returnPercent': (model_value / config.model_starting_capital - 1) * 100, 'drawdownPercent': (model_value / peak - 1) * 100, 'exposurePercent': invested / max(model_value, 1e-06) * 100, 'positions': positions, 'closed': closed, 'equity': _dedupe_equity(equity), 'events': events, 'dataFreshness': max(freshness) if freshness else None, 'currentState': 'in_market' if positions else 'out_of_market'}
-        self.state.setdefault('strategies', {})[SUPER_ID] = durable
+        durable = {'configFingerprint': fingerprint, 'rebuildRequired': False, 'capital': config.model_starting_capital, 'cash': cash, 'investedValue': invested, 'modelValue': model_value, 'returnPercent': (model_value / config.model_starting_capital - 1) * 100, 'drawdownPercent': (model_value / peak - 1) * 100, 'exposurePercent': invested / max(model_value, 1e-06) * 100, 'positions': positions, 'closed': closed, 'equity': _dedupe_equity(equity), 'events': events, 'dataFreshness': max(freshness) if freshness else None, 'currentState': 'in_market' if positions else 'out_of_market', 'warnings': []}
         result.update({'status': 'current', 'currentState': durable['currentState'], 'modelValue': durable['modelValue'], 'returnPercent': durable['returnPercent'], 'drawdownPercent': durable['drawdownPercent'], 'exposurePercent': durable['exposurePercent'], 'cash': durable['cash'], 'investedValue': durable['investedValue'], 'equitySnapshots': durable['equity'], 'virtualPositions': list(positions.values()), 'closedVirtualTrades': closed, 'events': events, 'latestEvent': events[-1] if events else None, 'dataFreshness': durable['dataFreshness']})
+        _apply_performance_warnings(result, self.config.sanity, quality_warnings)
+        durable['positions'] = {
+            _row_key(
+                WatchlistRow(
+                    signal_ticker=position['signalTicker'],
+                    execution_ticker=position['executionTicker'],
+                    enabled=True,
+                    allocation_weight=1,
+                )
+            ): position
+            for position in result['virtualPositions']
+        }
+        durable['closed'] = result['closedVirtualTrades']
+        durable['warnings'] = result['warnings']
+        self.state.setdefault('strategies', {})[SUPER_ID] = durable
         return result
 
     def _scan_sma(self) -> dict[str, Any]:
@@ -254,9 +279,18 @@ class ScannerEngine:
         row_capital = config.model_starting_capital / len(rows)
         row_results: list[dict[str, Any]] = []
         freshness: list[str] = []
+        quality_warnings: list[dict[str, Any]] = []
         for row in rows:
             reference = self._fetch(row.signal_ticker)
             execution = self._fetch(row.execution_ticker)
+            quality_warnings.extend(
+                _market_data_pair_warnings(
+                    row,
+                    reference,
+                    execution,
+                    self.config.sanity,
+                )
+            )
             if reference:
                 freshness.append(reference[-1].day.isoformat())
             if execution:
@@ -292,6 +326,7 @@ class ScannerEngine:
         if not usable_results:
             if freshness:
                 result['dataFreshness'] = max(freshness)
+            result['warnings'] = _dedupe_warnings(quality_warnings)
             return result
 
         cash = sum(item['cash'] for item in row_results)
@@ -371,8 +406,8 @@ class ScannerEngine:
                 item['totalInstrumentCost'] for item in row_results
             ),
             'dataFreshness': data_freshness,
+            'warnings': [],
         }
-        self.state.setdefault('strategies', {})[SMA_ID] = durable
         result.update(
             {
                 'status': 'current',
@@ -397,6 +432,11 @@ class ScannerEngine:
                 'dataFreshness': data_freshness,
             }
         )
+        _apply_performance_warnings(result, self.config.sanity, quality_warnings)
+        durable['positions'] = result['virtualPositions']
+        durable['closed'] = result['closedVirtualTrades']
+        durable['warnings'] = result['warnings']
+        self.state.setdefault('strategies', {})[SMA_ID] = durable
         return result
 
 def _event(identifier: str, strategy_id: str, event_type: str, occurred_at: str, signal_ticker: str, execution_ticker: str, reason: str) -> dict[str, Any]:
@@ -415,6 +455,291 @@ def _json_clone(value: Any) -> Any:
 
 def _row_key(row: WatchlistRow) -> str:
     return f'{row.signal_ticker}|{row.execution_ticker}'
+
+def _warning(
+    code: str,
+    message: str,
+    affected_tickers: list[str],
+    *,
+    metric: str | None = None,
+    value: float | int | str | None = None,
+    threshold: float | int | str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        'severity': 'warning',
+        'code': code,
+        'message': message,
+        'affectedTickers': sorted(
+            {ticker for ticker in affected_tickers if ticker}
+        ),
+    }
+    if metric:
+        result['metric'] = metric
+    if value is not None:
+        result['value'] = round(value, 4) if isinstance(value, float) else value
+    if threshold is not None:
+        result['threshold'] = threshold
+    return result
+
+def _dedupe_warnings(warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for warning in warnings:
+        key = json.dumps(warning, sort_keys=True, separators=(',', ':'))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(warning)
+    return result
+
+def _scanner_warnings(strategies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    for strategy in strategies:
+        strategy_id = str(strategy.get('strategyId', ''))
+        for warning in strategy.get('warnings', []):
+            if not isinstance(warning, dict):
+                continue
+            warnings.append({**warning, 'strategyId': strategy_id})
+    return _dedupe_warnings(warnings)
+
+def _market_data_pair_warnings(
+    row: WatchlistRow,
+    signal_bars: list[PriceBar],
+    execution_bars: list[PriceBar],
+    sanity: SanityCheckConfig,
+) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    tickers = [row.signal_ticker, row.execution_ticker]
+    if not execution_bars:
+        warnings.append(
+            _warning(
+                'missing_execution_history',
+                (
+                    'Performance warning: execution instrument history is '
+                    'missing, so model returns/P&L cannot be trusted yet.'
+                ),
+                tickers,
+            )
+        )
+    else:
+        history_days = (execution_bars[-1].day - execution_bars[0].day).days
+        if history_days < sanity.minimum_execution_history_days:
+            warnings.append(
+                _warning(
+                    'short_execution_history',
+                    (
+                        'Performance warning: this model result may be '
+                        'distorted because the execution instrument has a '
+                        'short price history.'
+                    ),
+                    tickers,
+                    metric='executionHistoryDays',
+                    value=history_days,
+                    threshold=sanity.minimum_execution_history_days,
+                )
+            )
+    if signal_bars and execution_bars:
+        lag_days = abs((signal_bars[-1].day - execution_bars[-1].day).days)
+        if lag_days > sanity.maximum_data_lag_days:
+            warnings.append(
+                _warning(
+                    'signal_execution_data_lag',
+                    (
+                        'Performance warning: signal and execution ticker '
+                        'latest data dates differ, so model values may need '
+                        'review.'
+                    ),
+                    tickers,
+                    metric='dataLagDays',
+                    value=lag_days,
+                    threshold=sanity.maximum_data_lag_days,
+                )
+            )
+    return warnings
+
+def _apply_performance_warnings(
+    strategy: dict[str, Any],
+    sanity: SanityCheckConfig,
+    quality_warnings: list[dict[str, Any]],
+) -> None:
+    warnings = list(strategy.get('warnings', [])) + quality_warnings
+    for position in strategy.get('virtualPositions', []):
+        position_warnings = _position_warnings(position, sanity)
+        position['warnings'] = _dedupe_warnings(
+            list(position.get('warnings', [])) + position_warnings
+        )
+        warnings.extend(position['warnings'])
+    for trade in strategy.get('closedVirtualTrades', []):
+        trade_warnings = _trade_warnings(trade, sanity)
+        trade['warnings'] = _dedupe_warnings(
+            list(trade.get('warnings', [])) + trade_warnings
+        )
+        warnings.extend(trade['warnings'])
+    return_percent = _float_or_none(strategy.get('returnPercent'))
+    if (
+        return_percent is not None
+        and abs(return_percent) > sanity.high_model_return_percent
+    ):
+        warnings.append(
+            _warning(
+                'extreme_model_return',
+                (
+                    'Performance warning: this model return may be distorted '
+                    'by leveraged ETP price history or currency units.'
+                ),
+                _strategy_tickers(strategy),
+                metric='returnPercent',
+                value=return_percent,
+                threshold=sanity.high_model_return_percent,
+            )
+        )
+    drawdown = _float_or_none(strategy.get('drawdownPercent'))
+    trade_count = sum(
+        1
+        for event in strategy.get('events', [])
+        if event.get('eventType') in {'entry', 'exit'}
+    )
+    if (
+        drawdown is not None
+        and abs(drawdown) <= sanity.near_zero_drawdown_percent
+        and trade_count >= sanity.many_trades_threshold
+        and any(_looks_leveraged(ticker) for ticker in _strategy_tickers(strategy))
+    ):
+        warnings.append(
+            _warning(
+                'near_zero_drawdown_leveraged_book',
+                (
+                    'Performance warning: drawdown is near zero despite many '
+                    'leveraged-instrument trades; review model performance '
+                    'before relying on it.'
+                ),
+                _strategy_tickers(strategy),
+                metric='drawdownPercent',
+                value=drawdown,
+                threshold=sanity.near_zero_drawdown_percent,
+            )
+        )
+    strategy['warnings'] = _dedupe_warnings(warnings)
+
+def _position_warnings(
+    position: dict[str, Any],
+    sanity: SanityCheckConfig,
+) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    tickers = [
+        str(position.get('signalTicker') or ''),
+        str(position.get('executionTicker') or ''),
+    ]
+    open_pnl = _float_or_none(position.get('openPnlPercent'))
+    if open_pnl is not None and abs(open_pnl) > sanity.high_open_pnl_percent:
+        warnings.append(
+            _warning(
+                'extreme_open_pnl',
+                (
+                    'Performance warning: this open P/L may be distorted by '
+                    'leveraged ETP price history or currency units.'
+                ),
+                tickers,
+                metric='openPnlPercent',
+                value=open_pnl,
+                threshold=sanity.high_open_pnl_percent,
+            )
+        )
+    ratio = _price_ratio(position.get('entryPrice'), position.get('latestPrice'))
+    if ratio is not None and ratio > sanity.extreme_price_ratio:
+        warnings.append(
+            _warning(
+                'extreme_price_ratio',
+                (
+                    'Performance warning: latest price is extremely far from '
+                    'entry price; splits, rebases, adjusted data, or price '
+                    'units may be distorting model P/L.'
+                ),
+                tickers,
+                metric='latestToEntryPriceRatio',
+                value=ratio,
+                threshold=sanity.extreme_price_ratio,
+            )
+        )
+    return warnings
+
+def _trade_warnings(
+    trade: dict[str, Any],
+    sanity: SanityCheckConfig,
+) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    tickers = [
+        str(trade.get('signalTicker') or ''),
+        str(trade.get('executionTicker') or ''),
+    ]
+    pnl = _float_or_none(trade.get('pnlPercent') or trade.get('openPnlPercent'))
+    if pnl is not None and abs(pnl) > sanity.high_open_pnl_percent:
+        warnings.append(
+            _warning(
+                'extreme_trade_pnl',
+                (
+                    'Performance warning: this closed-trade P/L may be '
+                    'distorted by leveraged ETP price history or currency '
+                    'units.'
+                ),
+                tickers,
+                metric='pnlPercent',
+                value=pnl,
+                threshold=sanity.high_open_pnl_percent,
+            )
+        )
+    ratio = _price_ratio(trade.get('entryPrice'), trade.get('exitPrice'))
+    if ratio is not None and ratio > sanity.extreme_price_ratio:
+        warnings.append(
+            _warning(
+                'extreme_trade_price_ratio',
+                (
+                    'Performance warning: exit price is extremely far from '
+                    'entry price; splits, rebases, adjusted data, or price '
+                    'units may be distorting model P/L.'
+                ),
+                tickers,
+                metric='exitToEntryPriceRatio',
+                value=ratio,
+                threshold=sanity.extreme_price_ratio,
+            )
+        )
+    return warnings
+
+def _strategy_tickers(strategy: dict[str, Any]) -> list[str]:
+    tickers: list[str] = []
+    for collection in ('virtualPositions', 'closedVirtualTrades', 'events'):
+        for item in strategy.get(collection, []):
+            for key in ('signalTicker', 'executionTicker'):
+                value = item.get(key)
+                if isinstance(value, str) and value:
+                    tickers.append(value)
+    return sorted(set(tickers))
+
+def _looks_leveraged(ticker: str) -> bool:
+    upper = ticker.upper()
+    return (
+        upper.startswith('3')
+        or upper.endswith('3.L')
+        or '3X' in upper
+        or 'LEVERAGED' in upper
+    )
+
+def _float_or_none(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result == result and result not in {float('inf'), float('-inf')} else None
+
+def _price_ratio(left: Any, right: Any) -> float | None:
+    first = _float_or_none(left)
+    second = _float_or_none(right)
+    if first is None or second is None or first <= 0 or second <= 0:
+        return None
+    return max(first, second) / min(first, second)
 
 def _sma_effective_rows(config: Any) -> tuple[list[WatchlistRow], bool]:
     enabled_watchlist = [row for row in config.watchlist if row.enabled]
@@ -624,6 +949,7 @@ def _scan_sma_row(
         if last_cost_accrual_date
         else None,
         'totalInstrumentCost': total_cost,
+        'warnings': [],
     }
 
 def _empty_sma_row_result(
@@ -644,6 +970,7 @@ def _empty_sma_row_result(
         'lastEvaluatedMarketPeriod': None,
         'lastCostAccrualDate': None,
         'totalInstrumentCost': 0.0,
+        'warnings': [],
     }
 
 def _combine_sma_equity(row_results: list[dict[str, Any]]) -> list[dict[str, Any]]:

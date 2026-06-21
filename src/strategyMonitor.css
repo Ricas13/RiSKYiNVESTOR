@@ -21,6 +21,28 @@
   padding: 0.9rem 1rem;
 }
 
+.strategy-monitor__warning strong {
+  display: block;
+}
+
+.strategy-monitor__warning p {
+  color: var(--text-muted);
+  margin: 0.2rem 0 0.45rem;
+}
+
+.strategy-monitor__warning ul {
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.strategy-monitor__warning li + li {
+  margin-top: 0.25rem;
+}
+
+.strategy-monitor__warning li span {
+  font-weight: 700;
+}
+
 .strategy-monitor__tabs {
   background: var(--surface);
   border: 1px solid var(--border);
