@@ -5,7 +5,21 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import * as React from "react";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import type { DashboardData } from "../types";
+import {
+  buildActualTradeEquityModel,
+  type ActualTradeEquityModel,
+} from "../utils/actualTradeEquity";
 import {
   buildDashboardCommandCentreModel,
   type DashboardActionItem,
@@ -17,11 +31,15 @@ import { Badge, SectionHeader } from "./ui";
 
 export function DashboardCommandCentre({ data }: { data: DashboardData }) {
   const model = buildDashboardCommandCentreModel(data);
+  const actualTradeEquity = buildActualTradeEquityModel(
+    data.manualTrades.trades,
+  );
 
   if (!model.hasScannerSnapshot && model.scanner.status === "awaiting") {
     return (
-      <>
+      <div className="dashboard-command-centre">
         <ScannerHealthStrip model={model} />
+        <ActualTradeEquityPanel model={actualTradeEquity} />
         <div className="truthful-empty-state">
           <ShieldAlert size={24} />
           <div>
@@ -32,15 +50,16 @@ export function DashboardCommandCentre({ data }: { data: DashboardData }) {
             </p>
           </div>
         </div>
-      </>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="dashboard-command-centre">
       <ScannerHealthStrip model={model} />
       <ActionNeededPanel items={model.actionItems} />
       <CurrentModelPositionsPanel positions={model.currentModelPositions} />
+      <ActualTradeEquityPanel model={actualTradeEquity} />
       <section className="dashboard-command-grid">
         <SuperTrendSummaryCard summary={model.superTrend} />
         <Sma200SummaryCard summary={model.sma200} />
@@ -68,7 +87,7 @@ export function DashboardCommandCentre({ data }: { data: DashboardData }) {
           emptyCopy="No recent signal history has been imported."
         />
       </section>
-    </>
+    </div>
   );
 }
 
@@ -323,6 +342,110 @@ function Sma200SummaryCard({
   );
 }
 
+function ActualTradeEquityPanel({
+  model,
+}: {
+  model: ActualTradeEquityModel;
+}) {
+  return (
+    <section className="control-panel actual-trade-equity-panel">
+      <div className="control-panel__heading">
+        <div>
+          <span>Actual trading progress</span>
+          <h2>Actual trade equity</h2>
+          <p>
+            Based only on trades you manually recorded. Open trade values are
+            estimated only when a reference/current price is available. This is
+            not broker-synced.
+          </p>
+        </div>
+        <Badge tone={model.hasTrades ? "blue" : "neutral"}>
+          {model.openTrades} open · {model.closedTrades} closed
+        </Badge>
+      </div>
+      {!model.hasTrades ? (
+        <div className="empty-state actual-trade-empty">
+          <strong>No manual trades recorded yet.</strong>
+          <span>
+            Record trades in Trade Journal to build your actual equity curve.
+          </span>
+        </div>
+      ) : (
+        <>
+          <div className="actual-trade-summary-grid">
+            <Metric label="Total invested" value={formatMoney(model.totalInvested)} />
+            <Metric label="Realised P/L" value={formatMoney(model.realisedPnl)} />
+            <Metric
+              label="Unrealised P/L"
+              value={
+                model.unrealisedPnl === null
+                  ? "No current price"
+                  : formatMoney(model.unrealisedPnl)
+              }
+            />
+            <Metric label="Total P/L" value={formatMoney(model.totalPnl)} />
+            <Metric label="Open trades" value={model.openTrades} />
+            <Metric label="Closed trades" value={model.closedTrades} />
+          </div>
+          <div
+            className="actual-trade-equity-chart"
+            aria-label="Actual trade equity chart"
+          >
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              initialDimension={{ width: 920, height: 260 }}
+            >
+              <LineChart data={model.points}>
+                <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tick={chartTick}
+                  tickFormatter={shortDate}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={chartTick}
+                  tickFormatter={compactMoney}
+                  axisLine={false}
+                  tickLine={false}
+                  width={62}
+                />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  formatter={moneyTooltip}
+                  labelFormatter={(value) => shortDate(String(value))}
+                />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="realisedPnl"
+                  name="Realised P/L"
+                  stroke="#60a5fa"
+                  strokeWidth={2}
+                  dot={false}
+                />
+                {model.hasUnrealisedEstimate && (
+                  <Line
+                    type="monotone"
+                    dataKey="estimatedTotalPnl"
+                    name="Estimated total P/L"
+                    stroke="#50c897"
+                    strokeWidth={2}
+                    dot={false}
+                    connectNulls
+                  />
+                )}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function Metric({
   label,
   value,
@@ -365,4 +488,33 @@ function formatOptionalMoney(value: number | null) {
 
 function formatAllocation(value: number | null) {
   return value === null ? "Not supplied" : formatMoney(value);
+}
+
+const chartTick = {
+  fill: "var(--text-muted)",
+  fontSize: 11,
+};
+
+const tooltipStyle = {
+  background: "var(--surface)",
+  border: "1px solid var(--border)",
+  borderRadius: 12,
+  color: "var(--text-primary)",
+};
+
+function shortDate(value: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+  }).format(new Date(value));
+}
+
+function compactMoney(value: number | string) {
+  const number = Number(value);
+  return Number.isFinite(number) ? formatMoney(number) : "—";
+}
+
+function moneyTooltip(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? formatMoney(number) : "—";
 }
