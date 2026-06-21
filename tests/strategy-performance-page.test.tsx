@@ -166,6 +166,17 @@ function renderPerformance(snapshotValue: MultiStrategySnapshot | null = snapsho
   );
 }
 
+const performanceWarning = {
+  severity: "warning" as const,
+  code: "extreme_open_pnl",
+  message:
+    "Performance warning: this model result may be distorted by leveraged ETP price history or currency units.",
+  affectedTickers: ["ARM", "3ARM.L"],
+  metric: "openPnlPercent",
+  value: 1200,
+  threshold: 500,
+};
+
 test("strategy performance page renders with compact layout classes", () => {
   const source = readFileSync(
     new URL("../src/components/TradingControlPages.tsx", import.meta.url),
@@ -215,6 +226,30 @@ test("strategy performance renders equity snapshot chart section and closed virt
   assert.match(html, /Closed virtual trades/);
   assert.match(html, /3SMH\.L/);
   assert.match(html, /QQQ3\.L/);
+});
+
+test("strategy performance displays model warnings without hiding signal state", () => {
+  const warned = strategy("daily-supertrend", {
+    warnings: [performanceWarning],
+    virtualPositions: [
+      {
+        ...strategy("daily-supertrend").virtualPositions[0],
+        openPnlPercent: 1200,
+        warnings: [performanceWarning],
+      },
+    ],
+  });
+  const html = renderPerformance(
+    snapshot({
+      strategies: [warned, strategy("nasdaq-sma200-3x")],
+    }),
+  );
+
+  assert.match(html, /Model performance needs review/);
+  assert.match(html, /Signal state may still be valid/);
+  assert.match(html, /ARM → 3ARM\.L/);
+  assert.match(html, /extreme_open_pnl/);
+  assert.match(html, /Daily SuperTrend/);
 });
 
 test("strategy performance no longer shows misleading empty state when scanner data exists", () => {

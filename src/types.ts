@@ -320,6 +320,17 @@ export interface MultiStrategyEvent {
   reason: string;
 }
 
+export interface ModelPerformanceWarning {
+  severity: "warning";
+  code: string;
+  message: string;
+  affectedTickers: string[];
+  metric?: string;
+  value?: number | string;
+  threshold?: number | string;
+  strategyId?: string;
+}
+
 export interface MultiStrategyPosition {
   positionId: string;
   label: "Virtual model position";
@@ -336,6 +347,7 @@ export interface MultiStrategyPosition {
   daysHeld: number;
   latestSignal: string;
   reason: string;
+  warnings?: ModelPerformanceWarning[];
 }
 
 export interface MultiStrategyRecord {
@@ -363,6 +375,7 @@ export interface MultiStrategyRecord {
   regimeChangeEvents?: MultiStrategyEvent[];
   latestEvent: MultiStrategyEvent | null;
   dataFreshness: string | null;
+  warnings?: ModelPerformanceWarning[];
 }
 
 export interface MultiStrategySnapshot {
@@ -373,6 +386,7 @@ export interface MultiStrategySnapshot {
     version: string;
     status: string;
     errors: Array<{ strategyId?: string; message: string }>;
+    warnings?: ModelPerformanceWarning[];
     dataFreshness: {
       generatedAt: string;
       staleAfterMinutes: number;

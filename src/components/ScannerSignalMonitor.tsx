@@ -18,6 +18,7 @@ import {
   type SuperTrendSignalRow,
 } from "../utils/signalMonitorRows";
 import { formatDateTime, formatMoney, formatNumber } from "../utils/format";
+import { collectSnapshotPerformanceWarnings } from "../utils/modelWarnings";
 import { Badge } from "./ui";
 
 export function ScannerSignalMonitor({
@@ -30,6 +31,10 @@ export function ScannerSignalMonitor({
     [monitor.snapshot],
   );
   const snapshot = monitor.snapshot;
+  const performanceWarnings = React.useMemo(
+    () => collectSnapshotPerformanceWarnings(snapshot),
+    [snapshot],
+  );
 
   if (!snapshot) {
     return (
@@ -65,6 +70,13 @@ export function ScannerSignalMonitor({
       )}
       {!statusNeedsReview && monitor.lastError && (
         <ScannerWarning>{monitor.lastError}</ScannerWarning>
+      )}
+      {performanceWarnings.length > 0 && (
+        <ScannerWarning>
+          Performance warning: this model result may be distorted by leveraged
+          ETP price history or currency units. Signal state may still be valid,
+          but model returns/P&amp;L should be reviewed before relying on them.
+        </ScannerWarning>
       )}
 
       <div className="control-metric-grid signal-monitor-summary">
@@ -339,7 +351,7 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ScannerWarning({ children }: { children: string }) {
+function ScannerWarning({ children }: { children: React.ReactNode }) {
   return (
     <div className="strategy-monitor__warning" role="alert">
       <ShieldAlert size={18} />

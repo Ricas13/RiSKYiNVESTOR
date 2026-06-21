@@ -358,3 +358,37 @@ test("scanner schema enforces strategy isolation and virtual-only positions", ()
     /Virtual model position/i,
   );
 });
+
+test("scanner schema preserves additive performance warnings", () => {
+  const warning = {
+    severity: "warning",
+    code: "extreme_open_pnl",
+    message:
+      "Performance warning: this model result may be distorted by leveraged ETP price history or currency units.",
+    affectedTickers: ["3USL.UK"],
+    metric: "openPnlPercent",
+    value: 1200,
+    threshold: 500,
+  };
+  const value = snapshot();
+  value.scanner.warnings = [{ ...warning, strategyId: "daily-supertrend" }];
+  value.strategies[0].warnings = [warning];
+  value.strategies[0].virtualPositions[0].warnings = [warning];
+  value.strategies[0].closedVirtualTrades = [
+    {
+      positionId: "closed-warning",
+      executionTicker: "3USL.UK",
+      warnings: [warning],
+    },
+  ];
+
+  const valid = validateMultiStrategySnapshot(value);
+
+  assert.equal(valid.scanner.warnings?.[0].code, "extreme_open_pnl");
+  assert.equal(valid.strategies[0].warnings?.[0].threshold, 500);
+  assert.equal(
+    valid.strategies[0].virtualPositions[0].warnings?.[0].affectedTickers[0],
+    "3USL.UK",
+  );
+  assert.deepEqual(validateMultiStrategySnapshot(snapshot()).scanner.warnings, []);
+});

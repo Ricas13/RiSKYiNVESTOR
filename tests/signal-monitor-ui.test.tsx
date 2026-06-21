@@ -201,6 +201,17 @@ function render(monitorValue: MultiStrategyPublicState) {
   );
 }
 
+const performanceWarning = {
+  severity: "warning" as const,
+  code: "extreme_open_pnl",
+  message:
+    "Performance warning: this model result may be distorted by leveraged ETP price history or currency units.",
+  affectedTickers: ["SPY", "3USL.L"],
+  metric: "openPnlPercent",
+  value: 1200,
+  threshold: 500,
+};
+
 test("Signal Monitor renders Daily SuperTrend ticker pairs from scanner output", () => {
   const html = render(monitor(snapshot()));
 
@@ -210,6 +221,25 @@ test("Signal Monitor renders Daily SuperTrend ticker pairs from scanner output",
   assert.match(html, /VT/);
   assert.match(html, /3VT\.L/);
   assert.match(html, /Daily SuperTrend/);
+});
+
+test("Signal Monitor displays performance warnings without breaking signal state", () => {
+  const warned = snapshot({
+    scanner: {
+      ...snapshot().scanner,
+      warnings: [{ ...performanceWarning, strategyId: "daily-supertrend" }],
+    },
+    strategies: [
+      strategy("daily-supertrend", { warnings: [performanceWarning] }),
+      strategy("nasdaq-sma200-3x"),
+    ],
+  });
+  const html = render(monitor(warned));
+
+  assert.match(html, /Performance warning/);
+  assert.match(html, /Signal state may still be valid/);
+  assert.match(html, /Ticker-pair signal table/);
+  assert.match(html, /In market \/ green/);
 });
 
 test("Signal Monitor matches open positions to ticker pairs", () => {

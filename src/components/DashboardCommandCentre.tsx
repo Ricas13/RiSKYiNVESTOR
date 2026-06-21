@@ -136,6 +136,12 @@ function ScannerHealthStrip({
           ))}
         </ul>
       )}
+      {scanner.warnings.length > 0 && (
+        <div className="dashboard-history-note" role="status">
+          <strong>Performance warning:</strong> Signal state may still be valid,
+          but model returns/P&amp;L should be reviewed before relying on them.
+        </div>
+      )}
     </section>
   );
 }

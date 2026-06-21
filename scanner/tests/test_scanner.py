@@ -559,6 +559,55 @@ def test_sma_multi_ticker_exit_uses_signal_ticker_and_closes_execution(tmp_path)
     ]
 
 
+def test_performance_sanity_warnings_do_not_stop_scanner_output(
+    tmp_path, monkeypatch
+):
+    patch_supertrend(monkeypatch, {201: ["out", "in", "in"]})
+    provider = Provider()
+    provider.values = {
+        "SIG": bars([201, 202, 203], date(2026, 6, 18)),
+        "3BAD.L": bars([0.1, 0.1, 20], date(2026, 6, 18)),
+    }
+    config = validate_config(
+        configuration(
+            super_enabled=True,
+            sma_enabled=False,
+            supertrend_cost=0,
+            watchlist=[
+                {
+                    "signalTicker": "SIG",
+                    "executionTicker": "3BAD.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                }
+            ],
+        )
+    )
+
+    snapshot = ScannerEngine(
+        config,
+        provider,
+        tmp_path / "sanity-state",
+        tmp_path / "sanity-output",
+    ).scan()
+    supertrend = strategy(snapshot, "daily-supertrend")
+    warning_codes = {warning["code"] for warning in supertrend["warnings"]}
+    position_warning_codes = {
+        warning["code"]
+        for warning in supertrend["virtualPositions"][0]["warnings"]
+    }
+    output = json.loads((tmp_path / "sanity-output" / "multi_strategy_v1.json").read_text())
+
+    assert snapshot["scanner"]["status"] == "current"
+    assert supertrend["status"] == "current"
+    assert supertrend["virtualPositions"]
+    assert "extreme_open_pnl" in position_warning_codes
+    assert "extreme_price_ratio" in position_warning_codes
+    assert "extreme_model_return" in warning_codes
+    assert snapshot["scanner"]["warnings"]
+    assert output["scanner"]["warnings"]
+
+
 def test_sma_annual_instrument_cost_is_durable_and_not_double_charged(tmp_path):
     provider = Provider()
     provider.values = {

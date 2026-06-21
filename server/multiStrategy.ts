@@ -19,6 +19,17 @@ export interface MultiStrategyEvent {
   reason: string;
 }
 
+export interface ModelPerformanceWarning {
+  severity: "warning";
+  code: string;
+  message: string;
+  affectedTickers: string[];
+  metric?: string;
+  value?: number | string;
+  threshold?: number | string;
+  strategyId?: string;
+}
+
 export interface MultiStrategyPosition {
   positionId: string;
   label: "Virtual model position";
@@ -35,6 +46,7 @@ export interface MultiStrategyPosition {
   daysHeld: number;
   latestSignal: string;
   reason: string;
+  warnings?: ModelPerformanceWarning[];
   [key: string]: unknown;
 }
 
@@ -63,6 +75,7 @@ export interface MultiStrategyRecord {
   regimeChangeEvents?: MultiStrategyEvent[];
   latestEvent: MultiStrategyEvent | null;
   dataFreshness: string | null;
+  warnings?: ModelPerformanceWarning[];
 }
 
 export interface MultiStrategySnapshot {
@@ -73,6 +86,7 @@ export interface MultiStrategySnapshot {
     version: string;
     status: string;
     errors: Array<{ strategyId?: string; message: string }>;
+    warnings?: ModelPerformanceWarning[];
     dataFreshness:
       | {
           generatedAt: string;
@@ -157,6 +171,37 @@ function eventValue(
   };
 }
 
+function warningValue(value: unknown): ModelPerformanceWarning {
+  const warning = objectValue(value, "Model performance warning");
+  const affectedTickers = Array.isArray(warning.affectedTickers)
+    ? warning.affectedTickers
+        .filter((ticker): ticker is string => typeof ticker === "string")
+        .map((ticker) => ticker.slice(0, 80))
+    : [];
+  const result: ModelPerformanceWarning = {
+    severity: "warning",
+    code: textValue(warning.code, "Warning code", 120),
+    message: textValue(warning.message, "Warning message", 1000),
+    affectedTickers,
+  };
+  if (typeof warning.metric === "string") {
+    result.metric = warning.metric.slice(0, 120);
+  }
+  if (typeof warning.value === "number" || typeof warning.value === "string") {
+    result.value = warning.value;
+  }
+  if (
+    typeof warning.threshold === "number" ||
+    typeof warning.threshold === "string"
+  ) {
+    result.threshold = warning.threshold;
+  }
+  if (typeof warning.strategyId === "string") {
+    result.strategyId = warning.strategyId.slice(0, 100);
+  }
+  return result;
+}
+
 function positionValue(value: unknown): MultiStrategyPosition {
   const position = objectValue(value, "Virtual position");
   if (position.label !== "Virtual model position") {
@@ -186,6 +231,9 @@ function positionValue(value: unknown): MultiStrategyPosition {
     daysHeld: numberValue(position.daysHeld ?? 0),
     latestSignal: textValue(position.latestSignal, "Latest signal", 100),
     reason: textValue(position.reason, "Position reason", 1000),
+    warnings: Array.isArray(position.warnings)
+      ? position.warnings.map(warningValue)
+      : [],
   };
 }
 
@@ -209,6 +257,9 @@ function strategyValue(value: unknown): MultiStrategyRecord {
           value: numberValue(item.value),
         };
       })
+    : [];
+  const warnings = Array.isArray(strategy.warnings)
+    ? strategy.warnings.map(warningValue)
     : [];
   return {
     strategyId,
@@ -270,6 +321,7 @@ function strategyValue(value: unknown): MultiStrategyRecord {
       strategy.dataFreshness === undefined
         ? null
         : textValue(strategy.dataFreshness, "Data freshness", 100),
+    warnings,
   };
 }
 
@@ -310,6 +362,9 @@ export function validateMultiStrategySnapshot(
               message: textValue(error.message, "Scanner error message", 500),
             };
           })
+        : [],
+      warnings: Array.isArray(scanner.warnings)
+        ? scanner.warnings.map(warningValue)
         : [],
       dataFreshness:
         scanner.dataFreshness === null ||

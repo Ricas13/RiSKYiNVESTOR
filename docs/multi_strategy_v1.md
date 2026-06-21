@@ -12,7 +12,8 @@ Top-level fields:
 
 - `schemaVersion`: always `multi_strategy_v1`
 - `generatedAt`: UTC ISO-8601 timestamp
-- `scanner`: scanner name/version, `status`, safe errors and data freshness
+- `scanner`: scanner name/version, `status`, safe errors, non-fatal warnings
+  and data freshness
 - `strategies`: independent Daily SuperTrend and Nasdaq SMA200 Regime — 3x
   records
 
@@ -27,6 +28,12 @@ Each strategy record contains:
 - `closedVirtualTrades`
 - stable, deduplicated `events`
 - `latestEvent` and `dataFreshness`
+- optional `warnings` describing non-fatal performance/data-quality concerns
+
+Warnings are additive and non-fatal. They may appear at `scanner.warnings`,
+`strategy.warnings`, `position.warnings`, or `trade.warnings`. A warning means
+the current signal state may still be usable, but model returns/P&L should be
+reviewed before relying on them.
 
 When a material strategy parameter changes, the scanner does not blend the new
 configuration with the previous virtual state. It preserves the old strategy
