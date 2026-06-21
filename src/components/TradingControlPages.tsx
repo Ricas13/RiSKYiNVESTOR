@@ -121,24 +121,24 @@ function ControlDashboard({ data }: { data: DashboardData }) {
       : formatMoney(fallback);
   const metrics = [
     {
-      label: "Actual portfolio",
+      label: "Actual trades",
       value: scannerValue(
         scannerSnapshot?.actualPortfolioValue ?? null,
         latest?.totalPortfolioValue ?? 0,
       ),
-      emptyValue: "No live portfolio data",
+      emptyValue: "No actual trades yet",
       detail: scannerSnapshot
         ? scannerSnapshot.actualPortfolioValue === null
           ? "Scanner placeholder · actual value unavailable"
           : "Latest canonical scanner snapshot"
         : examplePortfolio
-          ? "Example snapshot · not live portfolio data"
-          : "Latest private snapshot",
+          ? "Example snapshot · not live trade data"
+          : "Latest actual trade snapshot",
       icon: Landmark,
       tone: "green",
     },
     {
-      label: "Model portfolio",
+      label: "Model strategy value",
       value: scannerValue(
         scannerSnapshot?.modelPortfolioValue ?? null,
         data.performance.fixedStakeEquivalent,
@@ -153,7 +153,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
       tone: "purple",
     },
     {
-      label: "Daily P/L",
+      label: "Actual trade P/L",
       value: scannerSnapshot
         ? scannerSnapshot.actualDailyPnl === null
           ? "Unavailable"
@@ -171,7 +171,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
       tone: data.dailyPL.actualDailyPL >= 0 ? "green" : "red",
     },
     {
-      label: "Total P/L",
+      label: "Actual total P/L",
       value: scannerSnapshot
         ? "Unavailable"
         : formatMoney(data.dailyPL.actualTotalPL),
@@ -179,13 +179,13 @@ function ControlDashboard({ data }: { data: DashboardData }) {
       detail: scannerSnapshot
         ? "Not supplied by scanner snapshot"
         : examplePortfolio
-        ? "Example total · not live portfolio data"
-        : "Actual wealth less net capital",
+        ? "Example total · not live trade data"
+        : "Actual trade records less net capital",
       icon: BadgePoundSterling,
       tone: data.dailyPL.actualTotalPL >= 0 ? "green" : "red",
     },
     {
-      label: "Current drawdown",
+      label: "Strategy drawdown",
       value: scannerSnapshot
         ? scannerSnapshot.currentDrawdownPercent === null
           ? "Unavailable"
@@ -197,13 +197,13 @@ function ControlDashboard({ data }: { data: DashboardData }) {
           ? "Scanner placeholder · drawdown unavailable"
           : "Latest canonical scanner snapshot"
         : examplePortfolio
-        ? "Example drawdown · not live portfolio data"
-        : "From recorded portfolio peak",
+        ? "Example drawdown · not live trade data"
+        : "From recorded strategy/trade peak",
       icon: TrendingDown,
       tone: data.dailyPL.drawdownPercent < -10 ? "red" : "amber",
     },
     {
-      label: "Cash / invested",
+      label: "Historical cash / invested",
       value: scannerSnapshot
         ? scannerSnapshot.cashValue === null ||
           scannerSnapshot.investedValue === null
@@ -220,7 +220,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
           : (latest?.totalPortfolioValue ?? 0) > 0
             ? `${formatNumber((((latest?.cashBalance ?? 0) / (latest?.totalPortfolioValue ?? 1)) * 100))}% cash`
             : examplePortfolio
-              ? "Example allocation · not live portfolio data"
+              ? "Example allocation · not live trade data"
               : "No snapshot",
       icon: PieChart,
       tone: "blue",
@@ -234,12 +234,18 @@ function ControlDashboard({ data }: { data: DashboardData }) {
 
   return (
     <div className="control-page-stack">
+      <PageHeading
+        eyebrow="Dashboard"
+        title="Signal control room"
+        copy="Current strategy signals, weekly reversals, model positions and actual trades in one place."
+      />
+
       <TodayActionPanel events={todayEvents} scanner={data.scannerImport} />
 
       <div className="control-metric-grid">
         {metrics.map(({ label, value, emptyValue, detail, icon: Icon, tone }) => {
           const hasData =
-            label === "Model portfolio"
+            label === "Model strategy value"
               ? Boolean(scannerSnapshot) || hasModelPerformance
               : Boolean(scannerSnapshot) || hasManualPortfolio;
           return (
@@ -250,7 +256,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
               <Icon size={18} />
               <span>{label}</span>
               <strong>{hasData ? value : emptyValue}</strong>
-              <p>{hasData ? detail : "No live portfolio data recorded."}</p>
+              <p>{hasData ? detail : "No actual signal trade data recorded."}</p>
             </article>
           );
         })}
@@ -260,8 +266,8 @@ function ControlDashboard({ data }: { data: DashboardData }) {
         <div className="control-panel">
           <div className="control-panel__heading">
             <div>
-              <span>Actionable signals</span>
-              <h2>Verified flips only</h2>
+              <span>Weekly reversals</span>
+              <h2>Signal flips to review</h2>
             </div>
             <Badge tone={actionable.length ? "amber" : "green"}>
               {actionable.length}
@@ -272,15 +278,15 @@ function ControlDashboard({ data }: { data: DashboardData }) {
             deliveries={data.notifications.deliveries}
             limit={4}
             compact
-            emptyCopy="No actionable entry or exit flips."
+            emptyCopy="No entry or exit reversals to review."
           />
         </div>
 
         <div className="control-panel">
           <div className="control-panel__heading">
             <div>
-              <span>Current watchlist</span>
-              <h2>State, not alerts</h2>
+              <span>Current strategy signals</span>
+              <h2>Green/red control board</h2>
             </div>
             <Badge tone="blue">{data.watchlist.length}</Badge>
           </div>
@@ -294,7 +300,7 @@ function ControlDashboard({ data }: { data: DashboardData }) {
             <span>Event stream</span>
             <h2>Five most recent events</h2>
           </div>
-          <a href="#/signals">View all signals</a>
+          <a href="#/signal-monitor">View all signals</a>
         </div>
         <SignalEventList
           events={data.signalEvents.events}
@@ -339,9 +345,9 @@ function SignalsPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) 
   return (
     <div className="control-page-stack">
       <PageHeading
-        eyebrow="Signals"
-        title="Canonical scanner events"
-        copy="Every event includes the exact transition and triggering reason. Current trend state alone never becomes an alert."
+        eyebrow="Signal Monitor"
+        title="Current strategy signal stream"
+        copy="Review SuperTrend and SMA200 signal changes, weekly reversals and the exact reason each event was recorded."
       />
       <SignalEventList
         events={data.signalEvents.events}
@@ -376,16 +382,16 @@ function PortfolioPage({ data, mutate }: { data: DashboardData; mutate: Mutate }
   return (
     <div className="control-page-stack">
       <PageHeading
-        eyebrow="Portfolio"
-        title="Actual capital and risk"
-        copy="Manual positions, wealth snapshots, cash flows, concentration and drawdown."
+        eyebrow="Historical records"
+        title="Secondary capital and risk records"
+        copy="Legacy portfolio snapshots and exposure notes are kept here for history, away from the primary signal workflow."
       />
       {!hasPortfolioData && (
         <div className="truthful-empty-state">
           <Landmark size={24} />
           <div>
-            <h2>No live portfolio data recorded</h2>
-            <p>Add a genuine snapshot, cash flow, or manual trade to begin.</p>
+            <h2>No historical capital records</h2>
+            <p>Record manual trades from signals first; capital snapshots are optional.</p>
           </div>
         </div>
       )}
@@ -442,9 +448,9 @@ function PerformancePage({ data }: { data: DashboardData }) {
   return (
     <div className="control-page-stack">
       <PageHeading
-        eyebrow="Performance"
-        title="Model analytics and research"
-        copy="Detailed model positions, long performance history, charts, scenarios and backtests."
+        eyebrow="Strategy Performance"
+        title="Model and actual signal performance"
+        copy="Compare SuperTrend and SMA200 model behaviour, actual trade outcomes, equity curves and closed model trades."
       />
       {!hasPerformance ? (
         <div className="truthful-empty-state">
@@ -492,8 +498,8 @@ function TradeJournalPage({
     <div className="control-page-stack" id="manual-trades">
       <PageHeading
         eyebrow="Trade Journal"
-        title="Real entries, exits and decisions"
-        copy="Record fills, partial exits, fees, reasoning, emotion and system overrides."
+        title="Manual trades taken from signals"
+        copy="Record the buys and sells you actually place after reviewing SuperTrend, SMA200 or manual signals."
       />
       <ManualTrades
         trades={data.manualTrades.trades}

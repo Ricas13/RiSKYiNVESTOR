@@ -4,7 +4,6 @@ import {
   BookOpen,
   CandlestickChart,
   ChevronRight,
-  CircleDollarSign,
   FileWarning,
   LockKeyhole,
   LogOut,
@@ -13,7 +12,6 @@ import {
   Palette,
   Settings2,
   UserRound,
-  WalletCards,
   X,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -24,14 +22,23 @@ import type { ControlPage } from "./TradingControlPages";
 const navigation: Array<{
   page: ControlPage;
   label: string;
+  href?: string;
   icon: typeof Activity;
 }> = [
   { page: "dashboard", label: "Dashboard", icon: Activity },
-  { page: "signals", label: "Signals", icon: CircleDollarSign },
-  { page: "portfolio", label: "Portfolio", icon: WalletCards },
-  { page: "performance", label: "Performance", icon: BarChart3 },
+  {
+    page: "signals",
+    label: "Signal Monitor",
+    href: "signal-monitor",
+    icon: CandlestickChart,
+  },
+  {
+    page: "performance",
+    label: "Strategy Performance",
+    href: "strategy-performance",
+    icon: BarChart3,
+  },
   { page: "trade-journal", label: "Trade Journal", icon: BookOpen },
-  { page: "strategies", label: "Strategy Monitor", icon: CandlestickChart },
   { page: "alerts", label: "Alerts", icon: MessageSquareWarning },
   { page: "settings", label: "Settings", icon: Settings2 },
 ];
@@ -84,7 +91,7 @@ export function DashboardLayout({
           </div>
           <div>
             <strong>Risky Investor</strong>
-            <span>Private trading control</span>
+            <span>Signal control room</span>
           </div>
           <button
             className="icon-button sidebar-close"
@@ -97,9 +104,9 @@ export function DashboardLayout({
 
         <nav aria-label="Trading control">
           <p className="nav-label">Control room</p>
-          {navigation.map(({ page, label, icon: Icon }) => (
+          {navigation.map(({ page, label, href, icon: Icon }) => (
             <a
-              href={`#/${page}`}
+              href={`#/${href ?? page}`}
               key={page}
               onClick={() => setMenuOpen(false)}
               aria-current={activePage === page ? "page" : undefined}
@@ -117,8 +124,8 @@ export function DashboardLayout({
         <div className="sidebar-note">
           <FileWarning size={19} />
           <div>
-            <strong>Transition-controlled alerts</strong>
-            <p>Current trend state alone never creates an entry or exit.</p>
+            <strong>Signal reversals first</strong>
+            <p>Review flips, model positions and manual actions in one place.</p>
           </div>
         </div>
 
@@ -159,7 +166,7 @@ export function DashboardLayout({
             <Menu size={20} />
           </button>
           <div className="topbar-context">
-            <span className="topbar-page-eyebrow">Private dashboard</span>
+            <span className="topbar-page-eyebrow">Signal control room</span>
             <strong className="topbar-kicker">{pageLabel}</strong>
             <span className="topbar-scan">
               {scannerStatus ?? "Loading scanner state…"}
@@ -186,10 +193,10 @@ export function DashboardLayout({
           <div className="demo-data-warning" role="alert">
             <FileWarning size={20} />
             <div>
-              <strong>Demo data present — not live portfolio or scanner data</strong>
+              <strong>Demo data present — not live signal or trade data</strong>
               <p>
-                Displayed historical trades, P/L, portfolio values, and backtests
-                may be examples. Scanner status is shown separately above.
+                Displayed historical trades, P/L, model values and signal
+                examples may be fake. Scanner status is shown separately above.
               </p>
             </div>
             <a href="#/settings">Review and clean up</a>
@@ -197,8 +204,8 @@ export function DashboardLayout({
         )}
         <main>{children}</main>
         <footer className="site-footer">
-          <p>Risky Investor · Private trading control</p>
-          <p>Signals and education only. No broker execution.</p>
+          <p>Risky Investor · Signal control room</p>
+          <p>Strategy signals and journal only. No broker execution.</p>
         </footer>
       </div>
     </div>

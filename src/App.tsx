@@ -22,8 +22,15 @@ const pages = new Set<ControlPage>([
   "settings",
 ]);
 
+const routeAliases: Record<string, ControlPage> = {
+  "signal-monitor": "signals",
+  "strategy-performance": "performance",
+  trades: "trade-journal",
+};
+
 function pageFromHash(): ControlPage {
-  const candidate = window.location.hash.replace(/^#\/?/, "") as ControlPage;
+  const route = window.location.hash.replace(/^#\/?/, "");
+  const candidate = (routeAliases[route] ?? route) as ControlPage;
   return pages.has(candidate) ? candidate : "dashboard";
 }
 
@@ -36,8 +43,8 @@ function LoadingState({ privateCheck = false }: { privateCheck?: boolean }) {
       <h1>{privateCheck ? "Checking private session" : "Loading private data"}</h1>
       <p>
         {privateCheck
-          ? "Confirming access before any trading-control data is requested."
-          : "Reading protected signals, positions and settings."}
+          ? "Confirming access before any signal-control data is requested."
+          : "Reading current strategy signals, model positions and settings."}
       </p>
     </div>
   );
@@ -47,7 +54,7 @@ function ErrorState({ message }: { message: string }) {
   return (
     <div className="state-screen state-screen--error">
       <CircleAlert size={32} />
-      <h1>Private trading-control data is unavailable</h1>
+      <h1>Signal control room data is unavailable</h1>
       <p>{message}</p>
     </div>
   );
