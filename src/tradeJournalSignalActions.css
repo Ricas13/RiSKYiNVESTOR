@@ -1,8 +1,4 @@
-.signal-action-form .form-grid {
-  align-items: start;
-}
-
-.signal-action-form .form-heading p,
+.simple-trade-form .form-heading p,
 .exit-modal .form-heading p {
   max-width: 620px;
   margin-top: 6px;
@@ -24,93 +20,36 @@
 }
 
 .signal-action-helper p {
-  max-width: 300px;
+  max-width: 340px;
   color: var(--text-muted);
   font-size: 9px;
   line-height: 1.5;
 }
 
-.advanced-details {
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 13px;
-  background: var(--surface-soft);
+.simple-trade-grid {
+  align-items: end;
 }
 
-.advanced-details summary {
-  cursor: pointer;
-  padding: 12px 14px;
-  color: var(--text-secondary);
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.simple-trade-table {
+  min-width: 980px;
 }
 
-.advanced-details .form-grid {
-  padding: 0 14px 14px;
-}
-
-.form-grid--advanced {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.signal-action-summary {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.signal-action-table {
-  min-width: 1180px;
-}
-
-.manual-action-row-details {
-  margin-top: 8px;
-}
-
-.manual-action-row-details summary {
-  cursor: pointer;
-  color: var(--text-muted);
+.simple-trade-table button {
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.1);
+  color: var(--text-primary);
   font-size: 8px;
-}
-
-.manual-action-row-details dl {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px 12px;
-  margin-top: 8px;
-  padding: 9px;
-  border-radius: 9px;
-  background: var(--surface-soft);
-}
-
-.manual-action-row-details div {
-  display: grid;
-  gap: 2px;
-}
-
-.manual-action-row-details dt {
-  color: var(--text-muted);
-  font-size: 7px;
   font-weight: 800;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-.manual-action-row-details dd {
-  color: var(--text-secondary);
-  font-size: 8px;
-}
-
-@media (max-width: 900px) {
-  .form-grid--advanced,
-  .signal-action-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.simple-trade-table .pl-stack {
+  display: inline-flex;
 }
 
 @media (max-width: 760px) {
-  .form-grid--advanced,
-  .signal-action-summary,
   .signal-action-helper {
     grid-template-columns: 1fr;
   }

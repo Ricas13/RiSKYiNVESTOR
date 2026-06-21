@@ -6,89 +6,74 @@ import type {
 } from "../types";
 import { calculateTrade } from "./manualTrades";
 
-export type StrategySource = "Daily SuperTrend" | "Nasdaq SMA200" | "Manual / Discretionary";
-export type SignalActionType = "enter" | "exit";
+export const STRATEGY_OPTIONS = [
+  "Daily SuperTrend",
+  "Nasdaq SMA200",
+  "Manual / Discretionary",
+] as const;
 
-export interface SignalActionFormState {
+export type StrategySource = (typeof STRATEGY_OPTIONS)[number];
+export type TradeActionType = "open" | "close";
+
+export interface SimpleTradeFormState {
   strategySource: StrategySource;
-  signalTicker: string;
-  executionTicker: string;
-  action: SignalActionType;
-  actionAt: string;
-  price: string;
-  amountInvested: string;
+  ticker: string;
+  action: TradeActionType;
+  tradeDate: string;
   quantity: string;
+  price: string;
+  totalCost: string;
   fees: string;
   notes: string;
-  referenceLink: string;
-  riskTier: string;
-  assetClass: string;
-  isTechnology: string;
-  isSingleStock: string;
-  leverageMultiplier: string;
-  entryReason: string;
-  followedSystem: string;
-  overrodeSystem: string;
-  emotionalState: string;
-  checkedChart: string;
-  lesson: string;
-  source: string;
 }
 
 export interface SignalActionOption {
   optionId: string;
-  group: "current_pair" | "open_model_position" | "recent_event";
+  group: "open_model_position" | "recent_event";
   label: string;
   strategySource: StrategySource;
-  signalTicker: string;
-  executionTicker: string;
-  action: SignalActionType;
+  ticker: string;
+  action: TradeActionType;
   reason: string;
 }
 
-export interface JournalActionRow {
-  actionId: string;
+export interface OpenTradeRow {
   trade: ManualTrade;
-  exitId: string | null;
-  date: string;
+  dateOpened: string;
   strategySource: StrategySource;
-  signalTicker: string;
-  executionTicker: string;
-  actionLabel: "Buy / Enter" | "Sell / Exit";
-  price: number;
-  amount: number;
-  quantity: number;
-  pnl: number | null;
+  ticker: string;
+  quantityRemaining: number;
+  entryPrice: number;
+  totalCost: number;
+  fees: number;
   notes: string;
-  referenceLink: string;
-  canRecordExit: boolean;
-  canEditTrade: boolean;
 }
 
-export const emptySignalActionForm = (): SignalActionFormState => ({
+export interface ClosedTradeRow {
+  trade: ManualTrade;
+  dateOpened: string;
+  dateClosed: string;
+  strategySource: StrategySource;
+  ticker: string;
+  quantity: number;
+  entryPrice: number;
+  exitPrice: number;
+  totalCost: number;
+  totalPnl: number;
+  pnlPercent: number;
+  notes: string;
+}
+
+export const emptySimpleTradeForm = (): SimpleTradeFormState => ({
   strategySource: "Daily SuperTrend",
-  signalTicker: "",
-  executionTicker: "",
-  action: "enter",
-  actionAt: toDateTimeLocal(new Date().toISOString()),
-  price: "",
-  amountInvested: "",
+  ticker: "",
+  action: "open",
+  tradeDate: toDateTimeLocal(new Date().toISOString()),
   quantity: "",
+  price: "",
+  totalCost: "",
   fees: "0",
   notes: "",
-  referenceLink: "",
-  riskTier: "CORE",
-  assetClass: "Signal action",
-  isTechnology: "false",
-  isSingleStock: "false",
-  leverageMultiplier: "1",
-  entryReason: "",
-  followedSystem: "true",
-  overrodeSystem: "false",
-  emotionalState: "",
-  checkedChart: "true",
-  lesson: "",
-  source: "manual",
 });
 
 export function buildSignalActionOptions(
@@ -103,28 +88,14 @@ export function buildSignalActionOptions(
     const source = sourceForStrategy(strategy);
     if (!source) continue;
 
-    for (const pair of strategyPairs(strategy)) {
-      addOption(options, {
-        optionId: `pair:${strategy.strategyId}:${pair.signalTicker}:${pair.executionTicker}`,
-        group: "current_pair",
-        label: `Current pair · ${source} · ${pair.signalTicker} → ${pair.executionTicker}`,
-        strategySource: source,
-        signalTicker: pair.signalTicker,
-        executionTicker: pair.executionTicker,
-        action: "enter",
-        reason: "Current scanner ticker pair.",
-      });
-    }
-
     for (const position of strategy.virtualPositions) {
       addOption(options, {
         optionId: `position:${position.positionId}`,
         group: "open_model_position",
-        label: `Open model position · ${source} · ${position.signalTicker} → ${position.executionTicker}`,
+        label: `Open model position · ${source} · ${position.executionTicker}`,
         strategySource: source,
-        signalTicker: position.signalTicker,
-        executionTicker: position.executionTicker,
-        action: "enter",
+        ticker: position.executionTicker,
+        action: "open",
         reason: position.reason || "Open virtual model position.",
       });
     }
@@ -133,11 +104,10 @@ export function buildSignalActionOptions(
       addOption(options, {
         optionId: `event:${event.eventId}`,
         group: "recent_event",
-        label: `Recent ${event.eventType === "exit" ? "exit" : "entry"} · ${source} · ${event.signalTicker} → ${event.executionTicker}`,
+        label: `Recent ${event.eventType === "exit" ? "exit" : "entry"} · ${source} · ${event.executionTicker}`,
         strategySource: source,
-        signalTicker: event.signalTicker,
-        executionTicker: event.executionTicker,
-        action: event.eventType === "exit" ? "exit" : "enter",
+        ticker: event.executionTicker,
+        action: event.eventType === "exit" ? "close" : "open",
         reason: event.reason,
       });
     }
@@ -151,130 +121,126 @@ export function buildSignalActionOptions(
 }
 
 export function applySignalActionOption(
-  form: SignalActionFormState,
+  form: SimpleTradeFormState,
   option: SignalActionOption,
-): SignalActionFormState {
+): SimpleTradeFormState {
   return {
     ...form,
     strategySource: option.strategySource,
-    signalTicker: option.signalTicker,
-    executionTicker: option.executionTicker,
+    ticker: option.ticker,
     action: option.action,
     notes: option.reason && !form.notes ? option.reason : form.notes,
-    entryReason:
-      option.reason && !form.entryReason ? option.reason : form.entryReason,
   };
 }
 
-export function buildManualTradePayload(form: SignalActionFormState) {
+export function buildManualTradePayload(form: SimpleTradeFormState) {
   const price = positiveNumber(form.price);
-  const amountInvested = positiveNumber(form.amountInvested);
-  const quantity =
-    positiveNumber(form.quantity, false) || amountInvested / Math.max(price, 0.000001);
+  const quantity = positiveNumber(form.quantity);
+  const totalCost = positiveNumber(form.totalCost, false) || quantity * price;
   const fees = positiveNumber(form.fees, false);
-  const signalTicker = form.signalTicker.trim().toUpperCase();
-  const executionTicker = form.executionTicker.trim().toUpperCase();
+  const ticker = form.ticker.trim().toUpperCase();
 
   return {
     strategyName: form.strategySource,
     sleeve: sleeveForSource(form.strategySource),
-    assetName: signalTicker,
-    ticker: executionTicker,
+    assetName: ticker,
+    ticker,
     direction: "long",
-    riskTier: form.riskTier,
-    assetClass: form.assetClass || "Signal action",
-    isTechnology: form.isTechnology === "true",
-    isSingleStock: form.isSingleStock === "true",
-    leverageMultiplier: positiveNumber(form.leverageMultiplier, false) || 1,
-    entryDate: form.actionAt,
+    riskTier: "CORE",
+    assetClass: "Manual trade",
+    isTechnology: false,
+    isSingleStock: false,
+    leverageMultiplier: 1,
+    entryDate: form.tradeDate,
     entryPrice: price,
     quantity,
-    amountInvested,
+    amountInvested: totalCost,
     fees,
     notes: form.notes,
-    source: ["manual", "Discord alert", "imported"].includes(form.source)
-      ? form.source
-      : "manual",
-    referenceLink: form.referenceLink,
+    source: "manual",
+    referenceLink: "",
     currentPrice: price,
     journal: {
-      entryReason: form.entryReason || form.notes,
-      followedSystem: form.followedSystem === "true",
-      overrodeSystem: form.overrodeSystem === "true",
-      emotionalState: form.emotionalState,
-      checkedChart: form.checkedChart === "true",
-      lesson: form.lesson,
+      entryReason: form.notes,
+      followedSystem: false,
+      overrodeSystem: false,
+      emotionalState: "",
+      checkedChart: false,
+      lesson: "",
     },
   };
 }
 
 export function buildManualExitPayload(
-  form: SignalActionFormState,
+  form: SimpleTradeFormState,
   remainingQuantity: number,
 ) {
   return {
-    exitDate: form.actionAt,
+    exitDate: form.tradeDate,
     exitPrice: positiveNumber(form.price),
     quantitySold: positiveNumber(form.quantity, false) || remainingQuantity,
     fees: positiveNumber(form.fees, false),
-    reason: form.notes || "Signal exit",
+    reason: "Close trade",
     notes: form.notes,
   };
 }
 
-export function buildJournalActionRows(trades: ManualTrade[]): JournalActionRow[] {
-  const rows = trades.flatMap((trade) => {
-    const result = calculateTrade(trade);
-    const entryRow: JournalActionRow = {
-      actionId: `${trade.id}:entry`,
-      trade,
-      exitId: null,
-      date: trade.entryDate,
-      strategySource: sourceForManualTrade(trade),
-      signalTicker: trade.assetName || trade.ticker,
-      executionTicker: trade.ticker,
-      actionLabel: "Buy / Enter",
-      price: trade.entryPrice,
-      amount: trade.amountInvested,
-      quantity: trade.quantity,
-      pnl: result.totalPL,
-      notes: trade.notes || trade.journal?.entryReason || "",
-      referenceLink: trade.referenceLink,
-      canRecordExit: result.quantityRemaining > 0,
-      canEditTrade: true,
-    };
+export function buildOpenTradeRows(trades: ManualTrade[]): OpenTradeRow[] {
+  return trades
+    .flatMap((trade) => {
+      const result = calculateTrade(trade);
+      if (result.quantityRemaining <= 0) return [];
+      return [
+        {
+          trade,
+          dateOpened: trade.entryDate,
+          strategySource: sourceForManualTrade(trade),
+          ticker: trade.ticker,
+          quantityRemaining: result.quantityRemaining,
+          entryPrice: trade.entryPrice,
+          totalCost: proportionalCost(trade.amountInvested, trade.quantity, result.quantityRemaining),
+          fees: trade.fees,
+          notes: trade.notes || trade.journal?.entryReason || "",
+        },
+      ];
+    })
+    .sort((left, right) => right.dateOpened.localeCompare(left.dateOpened));
+}
 
-    const entryUnitCost =
-      trade.quantity > 0
-        ? (trade.entryPrice * trade.quantity + trade.fees) / trade.quantity
-        : 0;
-    const exitRows: JournalActionRow[] = trade.exits.map((exit) => {
-      const proceeds = exit.exitPrice * exit.quantitySold - exit.fees;
-      const cost = entryUnitCost * exit.quantitySold;
-      return {
-        actionId: `${trade.id}:exit:${exit.id}`,
-        trade,
-        exitId: exit.id,
-        date: exit.exitDate,
-        strategySource: sourceForManualTrade(trade),
-        signalTicker: trade.assetName || trade.ticker,
-        executionTicker: trade.ticker,
-        actionLabel: "Sell / Exit",
-        price: exit.exitPrice,
-        amount: proceeds,
-        quantity: exit.quantitySold,
-        pnl: proceeds - cost,
-        notes: exit.notes || exit.reason,
-        referenceLink: "",
-        canRecordExit: false,
-        canEditTrade: false,
-      };
-    });
-
-    return [entryRow, ...exitRows];
-  });
-
-  return rows.sort((left, right) => right.date.localeCompare(left.date));
+export function buildClosedTradeRows(trades: ManualTrade[]): ClosedTradeRow[] {
+  return trades
+    .flatMap((trade) => {
+      const result = calculateTrade(trade);
+      if (result.quantityRemaining > 0 || trade.exits.length === 0) return [];
+      const sortedExits = [...trade.exits].sort((left, right) =>
+        right.exitDate.localeCompare(left.exitDate),
+      );
+      const quantity = trade.exits.reduce((sum, exit) => sum + exit.quantitySold, 0);
+      const grossExitValue = trade.exits.reduce(
+        (sum, exit) => sum + exit.exitPrice * exit.quantitySold,
+        0,
+      );
+      const exitPrice = quantity > 0 ? grossExitValue / quantity : 0;
+      const totalCost = trade.amountInvested;
+      const denominator = totalCost + trade.fees;
+      return [
+        {
+          trade,
+          dateOpened: trade.entryDate,
+          dateClosed: sortedExits[0]?.exitDate ?? trade.entryDate,
+          strategySource: sourceForManualTrade(trade),
+          ticker: trade.ticker,
+          quantity,
+          entryPrice: trade.entryPrice,
+          exitPrice,
+          totalCost,
+          totalPnl: result.totalPL,
+          pnlPercent: denominator > 0 ? (result.totalPL / denominator) * 100 : 0,
+          notes: sortedExits[0]?.notes || sortedExits[0]?.reason || trade.notes,
+        },
+      ];
+    })
+    .sort((left, right) => right.dateClosed.localeCompare(left.dateClosed));
 }
 
 export function sourceForManualTrade(trade: ManualTrade): StrategySource {
@@ -309,72 +275,33 @@ function sourceForStrategy(strategy: MultiStrategyRecord): StrategySource | null
   return null;
 }
 
-function strategyPairs(strategy: MultiStrategyRecord) {
-  if (strategy.strategyId === "daily-supertrend") {
-    const rows = strategy.parameters.watchlist;
-    if (!Array.isArray(rows)) return [];
-    return rows.flatMap((value) => {
-      if (!isRecord(value)) return [];
-      const signalTicker = textValue(value.signalTicker);
-      const executionTicker = textValue(value.executionTicker);
-      if (!signalTicker || !executionTicker) return [];
-      return [{ signalTicker, executionTicker }];
-    });
-  }
-
-  const position = strategy.virtualPositions[0];
-  const latestEvent = strategy.latestEvent ?? latestEventFrom(strategy.events);
-  const signalTicker =
-    strategy.referenceTicker ??
-    latestEvent?.signalTicker ??
-    textValue(strategy.parameters.referenceTicker);
-  const executionTicker =
-    strategy.executionTicker ??
-    position?.executionTicker ??
-    latestEvent?.executionTicker ??
-    textValue(strategy.parameters.riskOnTicker);
-  return signalTicker && executionTicker ? [{ signalTicker, executionTicker }] : [];
-}
-
 function recentActionableEvents(events: MultiStrategyEvent[]) {
   return events.filter(
     (event) => event.eventType === "entry" || event.eventType === "exit",
   );
 }
 
-function latestEventFrom(events: MultiStrategyEvent[]) {
-  return [...events].sort((left, right) =>
-    right.occurredAt.localeCompare(left.occurredAt),
-  )[0];
-}
-
 function addOption(
   options: Map<string, SignalActionOption>,
   option: SignalActionOption,
 ) {
-  const key = `${option.group}:${option.strategySource}:${option.signalTicker}:${option.executionTicker}:${option.action}`;
+  const key = `${option.group}:${option.strategySource}:${option.ticker}:${option.action}`;
   if (!options.has(key)) options.set(key, option);
 }
 
 function groupPriority(group: SignalActionOption["group"]) {
-  if (group === "recent_event") return 0;
-  if (group === "open_model_position") return 1;
-  return 2;
+  return group === "recent_event" ? 0 : 1;
 }
 
 function positiveNumber(value: string, required = true) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) {
-    if (required) return 0;
-    return 0;
+    return required ? 0 : 0;
   }
   return number;
 }
 
-function textValue(value: unknown) {
-  return typeof value === "string" ? value.trim().toUpperCase() : "";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+function proportionalCost(totalCost: number, totalQuantity: number, quantity: number) {
+  if (totalQuantity <= 0) return totalCost;
+  return totalCost * (quantity / totalQuantity);
 }
