@@ -209,6 +209,13 @@
   margin-bottom: 14px;
 }
 
+.actual-trade-equity-panel {
+  border-color: color-mix(in srgb, var(--blue) 24%, var(--border));
+  background:
+    radial-gradient(circle at 100% 0%, var(--blue-soft), transparent 34%),
+    var(--surface);
+}
+
 .actual-trade-summary-grid div {
   min-width: 0;
   padding: 10px;

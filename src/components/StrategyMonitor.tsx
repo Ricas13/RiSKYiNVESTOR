@@ -29,11 +29,13 @@ type MonitorTab = "all" | StrategyId;
 export function StrategyMonitor({
   monitor,
   refresh,
-  canRefresh,
+  canRefresh = false,
+  showHeading = true,
 }: {
   monitor: MultiStrategyPublicState;
-  refresh: () => Promise<unknown>;
-  canRefresh: boolean;
+  refresh?: () => Promise<unknown>;
+  canRefresh?: boolean;
+  showHeading?: boolean;
 }) {
   const [tab, setTab] = useState<MonitorTab>("all");
   const [busy, setBusy] = useState(false);
@@ -47,6 +49,7 @@ export function StrategyMonitor({
   );
 
   async function runRefresh() {
+    if (!refresh) return;
     setBusy(true);
     setMessage("");
     try {
@@ -62,7 +65,13 @@ export function StrategyMonitor({
   if (!monitor.snapshot) {
     return (
       <div className="strategy-monitor">
-        <MonitorHeading refresh={runRefresh} busy={busy} canRefresh={canRefresh} />
+        {showHeading && (
+          <MonitorHeading
+            refresh={refresh ? runRefresh : undefined}
+            busy={busy}
+            canRefresh={canRefresh}
+          />
+        )}
         <div className="truthful-empty-state">
           <Activity size={24} />
           <div>
@@ -90,7 +99,13 @@ export function StrategyMonitor({
 
   return (
     <div className="strategy-monitor">
-      <MonitorHeading refresh={runRefresh} busy={busy} canRefresh={canRefresh} />
+      {showHeading && (
+        <MonitorHeading
+          refresh={refresh ? runRefresh : undefined}
+          busy={busy}
+          canRefresh={canRefresh}
+        />
+      )}
 
       {!monitor.currentFileValid && (
         <div className="strategy-monitor__warning" role="alert">
@@ -154,7 +169,7 @@ function MonitorHeading({
   busy,
   canRefresh,
 }: {
-  refresh: () => void;
+  refresh?: () => void;
   busy: boolean;
   canRefresh: boolean;
 }) {
@@ -168,19 +183,21 @@ function MonitorHeading({
           figures never represent actual holdings or broker execution.
         </p>
       </div>
-      <button
-        type="button"
-        className="button button--secondary"
-        onClick={refresh}
-        disabled={busy || !canRefresh}
-        title={
-          canRefresh
-            ? "Refresh scanner snapshot"
-            : "Owner or admin access is required"
-        }
-      >
-        <RefreshCw size={16} /> {busy ? "Refreshing…" : "Refresh snapshot"}
-      </button>
+      {refresh && (
+        <button
+          type="button"
+          className="button button--secondary"
+          onClick={refresh}
+          disabled={busy || !canRefresh}
+          title={
+            canRefresh
+              ? "Refresh scanner snapshot"
+              : "Owner or admin access is required"
+          }
+        >
+          <RefreshCw size={16} /> {busy ? "Refreshing…" : "Refresh snapshot"}
+        </button>
+      )}
     </header>
   );
 }
