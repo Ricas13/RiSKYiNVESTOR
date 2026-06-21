@@ -1,16 +1,9 @@
-import {
-  Activity,
-  BadgePoundSterling,
-  CircleDollarSign,
-  Landmark,
-  PieChart,
-  TrendingDown,
-} from "lucide-react";
+import { Activity, Landmark } from "lucide-react";
 import type { AuthSession, DashboardData } from "../types";
-import { formatMoney, formatNumber } from "../utils/format";
 import { ActualSummaryCards } from "./ActualSummaryCards";
 import { BacktestResults } from "./BacktestResults";
 import { ClosedTradesTable } from "./ClosedTradesTable";
+import { DashboardCommandCentre } from "./DashboardCommandCentre";
 import { DrawdownPainTracker } from "./DrawdownPainTracker";
 import { ManualTrades } from "./ManualTrades";
 import { OpenPositionsTable } from "./OpenPositionsTable";
@@ -19,15 +12,11 @@ import { PerformanceCharts } from "./PerformanceCharts";
 import { RiskExposureDashboard } from "./RiskExposureDashboard";
 import { ScenarioSimulator } from "./ScenarioSimulator";
 import { ScannerSignalMonitor } from "./ScannerSignalMonitor";
-import {
-  NotificationHistory,
-  SignalEventList,
-  TodayActionPanel,
-} from "./SignalEvents";
+import { NotificationHistory, SignalEventList } from "./SignalEvents";
 import { SignalComparison } from "./SignalComparison";
 import { SettingsPage } from "./SettingsPage";
 import { StrategyMonitor } from "./StrategyMonitor";
-import { Badge, LiquidityBadge, SectionHeader, TierBadge, TrendBadge } from "./ui";
+import { SectionHeader } from "./ui";
 import { WealthDashboard } from "./WealthDashboard";
 
 export type ControlPage =
@@ -98,218 +87,14 @@ export function TradingControlPage({
 }
 
 function ControlDashboard({ data }: { data: DashboardData }) {
-  const snapshots = [...data.wealthSnapshots.snapshots].sort((a, b) =>
-    a.date.localeCompare(b.date),
-  );
-  const latest = snapshots.at(-1);
-  const scannerSnapshot = data.latestPortfolioSnapshot;
-  const hasManualPortfolio = Boolean(latest);
-  const hasModelPerformance =
-    data.performance.closedTrades > 0 ||
-    data.performance.realisedSeries.length > 0 ||
-    data.openTrades.length > 0 ||
-    data.closedTrades.trades.length > 0;
-  const examplePortfolio =
-    !scannerSnapshot && data.wealthSnapshots.isExample;
-  const scannerValue = (
-    value: number | null,
-    fallback: number,
-  ) =>
-    scannerSnapshot
-      ? value === null
-        ? "Unavailable"
-        : formatMoney(value)
-      : formatMoney(fallback);
-  const metrics = [
-    {
-      label: "Actual trades",
-      value: scannerValue(
-        scannerSnapshot?.actualPortfolioValue ?? null,
-        latest?.totalPortfolioValue ?? 0,
-      ),
-      emptyValue: "No actual trades yet",
-      detail: scannerSnapshot
-        ? scannerSnapshot.actualPortfolioValue === null
-          ? "Scanner placeholder · actual value unavailable"
-          : "Latest canonical scanner snapshot"
-        : examplePortfolio
-          ? "Example snapshot · not live trade data"
-          : "Latest actual trade snapshot",
-      icon: Landmark,
-      tone: "green",
-    },
-    {
-      label: "Model strategy value",
-      value: scannerValue(
-        scannerSnapshot?.modelPortfolioValue ?? null,
-        data.performance.fixedStakeEquivalent,
-      ),
-      emptyValue: "No model data",
-      detail: scannerSnapshot
-        ? scannerSnapshot.modelPortfolioValue === null
-          ? "Scanner placeholder · model value unavailable"
-          : "Latest canonical scanner snapshot"
-        : "Example model value · scanner snapshot unavailable",
-      icon: CircleDollarSign,
-      tone: "purple",
-    },
-    {
-      label: "Actual trade P/L",
-      value: scannerSnapshot
-        ? scannerSnapshot.actualDailyPnl === null
-          ? "Unavailable"
-          : formatMoney(scannerSnapshot.actualDailyPnl)
-        : formatMoney(data.dailyPL.actualDailyPL),
-      emptyValue: "No calculation",
-      detail: scannerSnapshot
-        ? scannerSnapshot.actualDailyPnl === null
-          ? "Scanner placeholder · daily P/L unavailable"
-          : "Latest canonical scanner snapshot"
-        : examplePortfolio
-        ? "Example P/L · scanner snapshot unavailable"
-        : `${data.dailyPL.actualDailyPLPercent >= 0 ? "+" : ""}${formatNumber(data.dailyPL.actualDailyPLPercent)}% adjusted for flows`,
-      icon: Activity,
-      tone: data.dailyPL.actualDailyPL >= 0 ? "green" : "red",
-    },
-    {
-      label: "Actual total P/L",
-      value: scannerSnapshot
-        ? "Unavailable"
-        : formatMoney(data.dailyPL.actualTotalPL),
-      emptyValue: "No calculation",
-      detail: scannerSnapshot
-        ? "Not supplied by scanner snapshot"
-        : examplePortfolio
-        ? "Example total · not live trade data"
-        : "Actual trade records less net capital",
-      icon: BadgePoundSterling,
-      tone: data.dailyPL.actualTotalPL >= 0 ? "green" : "red",
-    },
-    {
-      label: "Strategy drawdown",
-      value: scannerSnapshot
-        ? scannerSnapshot.currentDrawdownPercent === null
-          ? "Unavailable"
-          : `${formatNumber(scannerSnapshot.currentDrawdownPercent)}%`
-        : `${formatNumber(data.dailyPL.drawdownPercent)}%`,
-      emptyValue: "No calculation",
-      detail: scannerSnapshot
-        ? scannerSnapshot.currentDrawdownPercent === null
-          ? "Scanner placeholder · drawdown unavailable"
-          : "Latest canonical scanner snapshot"
-        : examplePortfolio
-        ? "Example drawdown · not live trade data"
-        : "From recorded strategy/trade peak",
-      icon: TrendingDown,
-      tone: data.dailyPL.drawdownPercent < -10 ? "red" : "amber",
-    },
-    {
-      label: "Historical cash / invested",
-      value: scannerSnapshot
-        ? scannerSnapshot.cashValue === null ||
-          scannerSnapshot.investedValue === null
-          ? "Unavailable"
-          : `${formatMoney(scannerSnapshot.cashValue)} / ${formatMoney(scannerSnapshot.investedValue)}`
-        : `${formatMoney(latest?.cashBalance ?? 0)} / ${formatMoney(latest?.investedValue ?? 0)}`,
-      emptyValue: "No allocation data",
-      detail:
-        scannerSnapshot
-          ? scannerSnapshot.cashValue === null ||
-            scannerSnapshot.investedValue === null
-            ? "Scanner placeholder · allocation unavailable"
-            : "Latest canonical scanner snapshot"
-          : (latest?.totalPortfolioValue ?? 0) > 0
-            ? `${formatNumber((((latest?.cashBalance ?? 0) / (latest?.totalPortfolioValue ?? 1)) * 100))}% cash`
-            : examplePortfolio
-              ? "Example allocation · not live trade data"
-              : "No snapshot",
-      icon: PieChart,
-      tone: "blue",
-    },
-  ];
-  const scanDate = data.scannerImport.lastGeneratedAt?.slice(0, 10);
-  const todayEvents = data.signalEvents.events.filter(
-    (event) => scanDate && event.occurredAt.slice(0, 10) === scanDate,
-  );
-  const actionable = todayEvents.filter((event) => event.isActionable);
-
   return (
     <div className="control-page-stack">
       <PageHeading
         eyebrow="Dashboard"
         title="Signal control room"
-        copy="Current strategy signals, weekly reversals, model positions and actual trades in one place."
+        copy="Daily command centre for scanner health, recent signal changes, current model positions and manual action review."
       />
-
-      <TodayActionPanel events={todayEvents} scanner={data.scannerImport} />
-
-      <div className="control-metric-grid">
-        {metrics.map(({ label, value, emptyValue, detail, icon: Icon, tone }) => {
-          const hasData =
-            label === "Model strategy value"
-              ? Boolean(scannerSnapshot) || hasModelPerformance
-              : Boolean(scannerSnapshot) || hasManualPortfolio;
-          return (
-            <article
-              className={`control-metric control-metric--${tone}`}
-              key={label}
-            >
-              <Icon size={18} />
-              <span>{label}</span>
-              <strong>{hasData ? value : emptyValue}</strong>
-              <p>{hasData ? detail : "No actual signal trade data recorded."}</p>
-            </article>
-          );
-        })}
-      </div>
-
-      <section className="control-dashboard-grid">
-        <div className="control-panel">
-          <div className="control-panel__heading">
-            <div>
-              <span>Weekly reversals</span>
-              <h2>Signal flips to review</h2>
-            </div>
-            <Badge tone={actionable.length ? "amber" : "green"}>
-              {actionable.length}
-            </Badge>
-          </div>
-          <SignalEventList
-            events={actionable}
-            deliveries={data.notifications.deliveries}
-            limit={4}
-            compact
-            emptyCopy="No entry or exit reversals to review."
-          />
-        </div>
-
-        <div className="control-panel">
-          <div className="control-panel__heading">
-            <div>
-              <span>Current strategy signals</span>
-              <h2>Green/red control board</h2>
-            </div>
-            <Badge tone="blue">{data.watchlist.length}</Badge>
-          </div>
-          <CompactWatchlist items={data.watchlist.slice(0, 6)} />
-        </div>
-      </section>
-
-      <section className="control-panel">
-        <div className="control-panel__heading">
-          <div>
-            <span>Event stream</span>
-            <h2>Five most recent events</h2>
-          </div>
-          <a href="#/signal-monitor">View all signals</a>
-        </div>
-        <SignalEventList
-          events={data.signalEvents.events}
-          deliveries={data.notifications.deliveries}
-          limit={5}
-          compact
-        />
-      </section>
+      <DashboardCommandCentre data={data} />
     </div>
   );
 }
@@ -398,7 +183,10 @@ function PortfolioPage({ data, mutate }: { data: DashboardData; mutate: Mutate }
           <Landmark size={24} />
           <div>
             <h2>No historical capital records</h2>
-            <p>Record manual trades from signals first; capital snapshots are optional.</p>
+            <p>
+              Record manual trades from signals first; capital snapshots are
+              optional.
+            </p>
           </div>
         </div>
       )}
@@ -413,9 +201,7 @@ function PortfolioPage({ data, mutate }: { data: DashboardData; mutate: Mutate }
         snapshots={data.wealthSnapshots.snapshots}
         cashFlows={data.cashFlows.cashFlows}
         trades={data.manualTrades.trades}
-        isExample={
-          data.wealthSnapshots.isExample || data.cashFlows.isExample
-        }
+        isExample={data.wealthSnapshots.isExample || data.cashFlows.isExample}
         mutate={mutate}
       />
       {hasPortfolioData && (
@@ -564,30 +350,6 @@ function AlertsPage({
           }
         }}
       />
-    </div>
-  );
-}
-
-function CompactWatchlist({
-  items,
-}: {
-  items: DashboardData["watchlist"];
-}) {
-  return (
-    <div className="compact-watchlist">
-      {items.map((item) => (
-        <article key={item.id}>
-          <div>
-            <strong>{item.assetName}</strong>
-            <span>
-              {item.entryTicker} → {item.tradeTicker}
-            </span>
-          </div>
-          <TrendBadge trend={item.currentTrend} />
-          <TierBadge tier={item.riskTier} />
-          <LiquidityBadge liquidity={item.liquidityStatus} />
-        </article>
-      ))}
     </div>
   );
 }
