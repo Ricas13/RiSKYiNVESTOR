@@ -110,8 +110,8 @@ class ScannerEngine:
 
     def _scan_supertrend(self) -> dict[str, Any]:
         config = self.config.supertrend
-        parameters = {'timeframe': config.timeframe, 'atrPeriod': config.atr_period, 'multiplier': config.multiplier, 'modelStartingCapital': config.model_starting_capital, 'allocationPolicy': config.allocation_policy, 'maximumConcurrentPositions': config.maximum_concurrent_positions, 'transactionCostPercent': config.transaction_cost_percent, 'watchlist': [{'signalTicker': row.signal_ticker, 'executionTicker': row.execution_ticker, 'enabled': row.enabled, 'allocationWeight': row.allocation_weight} for row in config.watchlist]}
-        result = _empty_strategy(SUPER_ID, 'Daily SuperTrend', config.enabled, f'Daily SuperTrend using ATR {config.atr_period} and {config.multiplier:g}× multiplier. Every historical transition is replayed chronologically in its independent virtual strategy book.', parameters, configured=any((row.signal_ticker and row.execution_ticker for row in config.watchlist)))
+        parameters = {'indicatorName': 'AdaptiveSuperTrendSignals', 'tradingViewCompatible': True, 'parityMode': 'tradingview_adaptive_supertrend_signals', 'timeframe': config.timeframe, 'referenceTimeframe': config.reference_timeframe, 'atrLength': config.atr_period, 'atrPeriod': config.atr_period, 'smoothing': config.smoothing, 'switchStoploss': config.switch_stoploss, 'useConfirmed': config.use_confirmed, 'legacyMultiplier': config.multiplier, 'modelStartingCapital': config.model_starting_capital, 'allocationPolicy': config.allocation_policy, 'maximumConcurrentPositions': config.maximum_concurrent_positions, 'transactionCostPercent': config.transaction_cost_percent, 'watchlist': [{'signalTicker': row.signal_ticker, 'executionTicker': row.execution_ticker, 'enabled': row.enabled, 'allocationWeight': row.allocation_weight} for row in config.watchlist]}
+        result = _empty_strategy(SUPER_ID, 'Daily SuperTrend', config.enabled, f'AdaptiveSuperTrendSignals parity mode using ATR {config.atr_period}, {config.smoothing} smoothing, daily reference timeframe and confirmed candles. Every historical transition is replayed chronologically in its independent virtual strategy book.', parameters, configured=any((row.signal_ticker and row.execution_ticker for row in config.watchlist)))
         if not config.enabled:
             return result
         fingerprint = _fingerprint(SUPER_ID, parameters)
@@ -141,7 +141,14 @@ class ScannerEngine:
             if execution_bars:
                 freshness.append(execution_bars[-1].day.isoformat())
                 market_days.update((bar.day for bar in execution_bars))
-            points = supertrend(signal_bars, config.atr_period, config.multiplier)
+            points = supertrend(
+                signal_bars,
+                config.atr_period,
+                config.multiplier,
+                smoothing=config.smoothing,
+                switch_stoploss=config.switch_stoploss,
+                use_confirmed=config.use_confirmed,
+            )
             if not points or not execution_bars:
                 continue
             row_key = _row_key(row)

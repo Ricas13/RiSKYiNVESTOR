@@ -24,6 +24,10 @@ class SuperTrendConfig:
     timeframe: str
     atr_period: int
     multiplier: float
+    smoothing: str
+    switch_stoploss: bool
+    reference_timeframe: str
+    use_confirmed: bool
     model_starting_capital: float
     allocation_policy: str
     maximum_concurrent_positions: int
@@ -224,7 +228,15 @@ def validate_config(value: Any) -> ScannerConfig:
             supertrend_raw.get("timeframe", "1d"), "SuperTrend timeframe"
         ),
         atr_period=int(
-            _number(supertrend_raw.get("atrPeriod", 10), "ATR period", 2, 500)
+            _number(
+                supertrend_raw.get(
+                    "atrLength",
+                    supertrend_raw.get("atrPeriod", 20),
+                ),
+                "ATR length",
+                2,
+                500,
+            )
         ),
         multiplier=_number(
             supertrend_raw.get("multiplier", 3),
@@ -232,6 +244,14 @@ def validate_config(value: Any) -> ScannerConfig:
             0.1,
             20,
         ),
+        smoothing=_supertrend_smoothing(
+            supertrend_raw.get("smoothing", "RMA")
+        ),
+        switch_stoploss=supertrend_raw.get("switchStoploss") is True,
+        reference_timeframe=_supertrend_reference_timeframe(
+            supertrend_raw.get("referenceTimeframe", "D")
+        ),
+        use_confirmed=supertrend_raw.get("useConfirmed") is not False,
         model_starting_capital=_number(
             supertrend_raw.get("modelStartingCapital", 10_000),
             "SuperTrend model starting capital",
@@ -436,3 +456,24 @@ def validate_config(value: Any) -> ScannerConfig:
 def load_config(path: Path) -> ScannerConfig:
     with path.open("r", encoding="utf-8") as handle:
         return validate_config(json.load(handle))
+
+
+def _supertrend_smoothing(value: Any) -> str:
+    smoothing = _text(value, "SuperTrend smoothing").upper()
+    if smoothing != "RMA":
+        raise ConfigurationError(
+            "SuperTrend smoothing must be RMA for TradingView parity."
+        )
+    return smoothing
+
+
+def _supertrend_reference_timeframe(value: Any) -> str:
+    reference_timeframe = _text(
+        value,
+        "SuperTrend reference timeframe",
+    ).upper()
+    if reference_timeframe != "D":
+        raise ConfigurationError(
+            "SuperTrend reference timeframe must be D for TradingView parity."
+        )
+    return reference_timeframe

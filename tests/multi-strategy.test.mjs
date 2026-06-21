@@ -120,6 +120,12 @@ test("strategy configuration is strict, disabled by default, and written atomica
   const root = await mkdtemp(path.join(os.tmpdir(), "risky-strategy-config-"));
   try {
     assert.equal(defaultStrategyConfiguration.strategies.dailySuperTrend.enabled, false);
+    assert.equal(defaultStrategyConfiguration.strategies.dailySuperTrend.atrLength, 20);
+    assert.equal(defaultStrategyConfiguration.strategies.dailySuperTrend.atrPeriod, 20);
+    assert.equal(defaultStrategyConfiguration.strategies.dailySuperTrend.smoothing, "RMA");
+    assert.equal(defaultStrategyConfiguration.strategies.dailySuperTrend.switchStoploss, false);
+    assert.equal(defaultStrategyConfiguration.strategies.dailySuperTrend.referenceTimeframe, "D");
+    assert.equal(defaultStrategyConfiguration.strategies.dailySuperTrend.useConfirmed, true);
     assert.equal(defaultStrategyConfiguration.strategies.nasdaqSma200.enabled, false);
     assert.deepEqual(
       defaultStrategyConfiguration.strategies.dailySuperTrend.watchlist,
@@ -208,6 +214,18 @@ test("strategy presets and ticker catalogue are safe editable templates", () => 
   assert.equal(superTrendPreset.strategy, "dailySuperTrend");
   assert.equal(
     superTrendPreset.configuration.strategies.dailySuperTrend.enabled,
+    false,
+  );
+  assert.equal(
+    superTrendPreset.configuration.strategies.dailySuperTrend.atrLength,
+    20,
+  );
+  assert.equal(
+    superTrendPreset.configuration.strategies.dailySuperTrend.smoothing,
+    "RMA",
+  );
+  assert.equal(
+    superTrendPreset.configuration.strategies.dailySuperTrend.switchStoploss,
     false,
   );
   assert.ok(

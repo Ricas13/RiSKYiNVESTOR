@@ -9,6 +9,9 @@ import pytest
 from risky_investor_scanner import engine as engine_module
 from risky_investor_scanner.calculations import (
     SuperTrendPoint,
+    adaptive_supertrend_factor,
+    atr_rma,
+    rma,
     simple_moving_average,
     supertrend,
 )
@@ -87,6 +90,10 @@ def configuration(
                 "timeframe": "1d",
                 "atrPeriod": 3,
                 "multiplier": 2,
+                "smoothing": "RMA",
+                "switchStoploss": False,
+                "referenceTimeframe": "D",
+                "useConfirmed": True,
                 "modelStartingCapital": supertrend_capital,
                 "allocationPolicy": allocation_policy,
                 "maximumConcurrentPositions": maximum_concurrent_positions,
@@ -149,7 +156,7 @@ def event_types(item):
 
 
 def patch_supertrend(monkeypatch, states_by_marker: dict[int, list[str]]):
-    def fake_supertrend(signal_bars, _atr_period, _multiplier):
+    def fake_supertrend(signal_bars, _atr_period, _multiplier=None, **_kwargs):
         marker = int(signal_bars[0].close)
         states = states_by_marker[marker]
         return [
@@ -168,6 +175,11 @@ def patch_supertrend(monkeypatch, states_by_marker: dict[int, list[str]]):
 def test_configuration_validation_and_disabled_behavior(tmp_path):
     valid = validate_config(configuration())
     assert valid.supertrend.enabled is True
+    assert valid.supertrend.atr_period == 3
+    assert valid.supertrend.smoothing == "RMA"
+    assert valid.supertrend.switch_stoploss is False
+    assert valid.supertrend.reference_timeframe == "D"
+    assert valid.supertrend.use_confirmed is True
     assert valid.sma.sma_length == 3
     assert valid.sma.watchlist == ()
     multi_sma = validate_config(
@@ -218,6 +230,8 @@ def test_configuration_validation_and_disabled_behavior(tmp_path):
     incomplete["strategies"]["nasdaqSma200"] = {"enabled": False}
     disabled_incomplete = validate_config(incomplete)
     assert disabled_incomplete.supertrend.watchlist == ()
+    assert disabled_incomplete.supertrend.atr_period == 20
+    assert disabled_incomplete.supertrend.smoothing == "RMA"
     assert disabled_incomplete.sma.reference_ticker == ""
 
 
@@ -234,8 +248,86 @@ def test_calculations_and_isolated_lifecycles(tmp_path):
     by_id = {item["strategyId"]: item for item in snapshot["strategies"]}
     assert set(by_id) == {"daily-supertrend", "nasdaq-sma200-3x"}
     assert by_id["daily-supertrend"]["parameters"].get("smaLength") is None
+    assert by_id["daily-supertrend"]["parameters"]["indicatorName"] == (
+        "AdaptiveSuperTrendSignals"
+    )
+    assert by_id["daily-supertrend"]["parameters"]["tradingViewCompatible"] is True
+    assert by_id["daily-supertrend"]["parameters"]["atrLength"] == 3
+    assert by_id["daily-supertrend"]["parameters"]["smoothing"] == "RMA"
+    assert by_id["daily-supertrend"]["parameters"]["switchStoploss"] is False
+    assert by_id["daily-supertrend"]["parameters"]["referenceTimeframe"] == "D"
+    assert by_id["daily-supertrend"]["parameters"]["useConfirmed"] is True
     assert by_id["nasdaq-sma200-3x"]["parameters"].get("atrPeriod") is None
     assert by_id["nasdaq-sma200-3x"]["currentState"] == "risk_on"
+
+
+def test_tradingview_adaptive_supertrend_calculations():
+    assert rma([1, 2, 3, 4], 3) == [None, None, 2, pytest.approx(2.6666666667)]
+    sample = [
+        PriceBar(
+            day=date(2024, 1, 1) + timedelta(days=index),
+            open=value,
+            high=value + 1,
+            low=value - 1,
+            close=value,
+            volume=1_000_000,
+        )
+        for index, value in enumerate([10, 11, 12, 13])
+    ]
+    assert atr_rma(sample, 3)[2] == pytest.approx(2)
+    assert adaptive_supertrend_factor(1, 4, switch_stoploss=False) == (1.0, 5.0)
+    assert adaptive_supertrend_factor(2, 4, switch_stoploss=False) == (3.0, 3.0)
+    assert adaptive_supertrend_factor(3, 4, switch_stoploss=False) == (4.5, 1.5)
+    assert adaptive_supertrend_factor(4, 4, switch_stoploss=False) == (5.0, 1.0)
+    assert adaptive_supertrend_factor(1, 4, switch_stoploss=True) == (5.0, 5.0)
+
+
+def test_tradingview_supertrend_direction_flips_and_dynamic_factors():
+    signal_bars = [
+        PriceBar(
+            day=date(2024, 1, 1) + timedelta(days=index),
+            open=close,
+            high=high,
+            low=low,
+            close=close,
+            volume=1_000_000,
+        )
+        for index, (high, low, close) in enumerate(
+            [
+                (10, 8, 9),
+                (11, 9, 10),
+                (12, 10, 11),
+                (13, 11, 12),
+                (14, 12, 13),
+                (15, 13, 14),
+                (30, 10, 29),
+                (31, 29, 30),
+                (32, 30, 31),
+                (33, 31, 32),
+                (34, 32, 33),
+                (33, 12, 13),
+                (14, 12, 13),
+                (13, 11, 12),
+            ]
+        )
+    ]
+    points = supertrend(signal_bars, 3, smoothing="RMA", use_confirmed=False)
+    states = [point.state for point in points]
+    factors = {point.factor for point in points}
+
+    assert "in" in states
+    assert "out" in states
+    assert any(
+        previous.state == "out" and current.state == "in"
+        for previous, current in zip(points, points[1:])
+    )
+    assert any(
+        previous.state == "in" and current.state == "out"
+        for previous, current in zip(points, points[1:])
+    )
+    assert len(factors) > 1
+    assert all(point.direction < 0 for point in points if point.state == "in")
+    assert all(point.direction > 0 for point in points if point.state == "out")
 
 
 def test_repeated_scan_has_no_duplicate_events_and_state_survives(tmp_path):
