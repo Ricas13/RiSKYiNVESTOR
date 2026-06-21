@@ -1,21 +1,30 @@
-import { ExternalLink, Pencil, Plus, Save, Trash2, X } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { Plus, Save, X } from "lucide-react";
+import { useMemo, useState, type FormEvent, type InputHTMLAttributes } from "react";
 import type { ManualTrade, MultiStrategyPublicState } from "../types";
 import { formatDateTime, formatMoney, formatNumber } from "../utils/format";
-import { calculateTrade } from "../utils/manualTrades";
 import {
+  STRATEGY_OPTIONS,
   applySignalActionOption,
-  buildJournalActionRows,
+  buildClosedTradeRows,
   buildManualExitPayload,
   buildManualTradePayload,
+  buildOpenTradeRows,
   buildSignalActionOptions,
-  emptySignalActionForm,
-  sourceForManualTrade,
+  emptySimpleTradeForm,
   toDateTimeLocal,
-  type JournalActionRow,
-  type SignalActionFormState,
+  type ClosedTradeRow,
+  type OpenTradeRow,
+  type SimpleTradeFormState,
 } from "../utils/tradeJournalSignalActions";
 import { Badge } from "./ui";
+
+interface CloseTradeState {
+  exitDate: string;
+  exitPrice: string;
+  quantitySold: string;
+  fees: string;
+  notes: string;
+}
 
 export function ManualTrades({
   trades,
@@ -32,74 +41,48 @@ export function ManualTrades({
     body?: unknown,
   ) => Promise<unknown>;
 }) {
-  const [form, setForm] = useState<SignalActionFormState>(() =>
-    emptySignalActionForm(),
+  const [form, setForm] = useState<SimpleTradeFormState>(() =>
+    emptySimpleTradeForm(),
   );
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [exitTrade, setExitTrade] = useState<ManualTrade | null>(null);
-  const [exitForm, setExitForm] = useState(() => emptyExitForm(null));
+  const [totalCostOverridden, setTotalCostOverridden] = useState(false);
+  const [closingTrade, setClosingTrade] = useState<OpenTradeRow | null>(null);
+  const [closeForm, setCloseForm] = useState<CloseTradeState>(() =>
+    emptyCloseForm(null),
+  );
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
-  const calculated = useMemo(
-    () => trades.map((trade) => ({ trade, result: calculateTrade(trade) })),
-    [trades],
-  );
-  const openTrades = calculated.filter(
-    (item) => item.result.quantityRemaining > 0,
-  );
-  const rows = useMemo(() => buildJournalActionRows(trades), [trades]);
-  const options = useMemo(
+  const openRows = useMemo(() => buildOpenTradeRows(trades), [trades]);
+  const closedRows = useMemo(() => buildClosedTradeRows(trades), [trades]);
+  const signalOptions = useMemo(
     () => buildSignalActionOptions(strategyMonitor),
     [strategyMonitor],
   );
-  const derivedQuantity = quantityPreview(form);
 
-  function updateField(name: keyof SignalActionFormState, value: string) {
-    setForm((current) => ({ ...current, [name]: value }));
+  function updateField(name: keyof SimpleTradeFormState, value: string) {
+    setForm((current) => {
+      const next = { ...current, [name]: value };
+      if ((name === "quantity" || name === "price") && !totalCostOverridden) {
+        next.totalCost = calculatedTotalCost(next.quantity, next.price);
+      }
+      return next;
+    });
+  }
+
+  function updateTotalCost(value: string) {
+    setTotalCostOverridden(true);
+    updateField("totalCost", value);
   }
 
   function applyPrefill(optionId: string) {
-    const option = options.find((item) => item.optionId === optionId);
+    const option = signalOptions.find((item) => item.optionId === optionId);
     if (!option) return;
     setForm((current) => applySignalActionOption(current, option));
   }
 
   function resetForm() {
-    setForm(emptySignalActionForm());
-    setEditingId(null);
-  }
-
-  function beginEdit(trade: ManualTrade) {
-    setEditingId(trade.id);
-    setForm({
-      strategySource: sourceForManualTrade(trade),
-      signalTicker: trade.assetName,
-      executionTicker: trade.ticker,
-      action: "enter",
-      actionAt: toDateTimeLocal(trade.entryDate),
-      price: String(trade.entryPrice),
-      quantity: String(trade.quantity),
-      amountInvested: String(trade.amountInvested),
-      fees: String(trade.fees),
-      notes: trade.notes,
-      referenceLink: trade.referenceLink,
-      riskTier: trade.riskTier ?? "CORE",
-      assetClass: trade.assetClass ?? "Signal action",
-      isTechnology: String(trade.isTechnology ?? false),
-      isSingleStock: String(trade.isSingleStock ?? false),
-      leverageMultiplier: String(trade.leverageMultiplier ?? 1),
-      entryReason: trade.journal?.entryReason ?? "",
-      followedSystem: String(trade.journal?.followedSystem ?? true),
-      overrodeSystem: String(trade.journal?.overrodeSystem ?? false),
-      emotionalState: trade.journal?.emotionalState ?? "",
-      checkedChart: String(trade.journal?.checkedChart ?? true),
-      lesson: trade.journal?.lesson ?? "",
-      source: trade.source,
-    });
-    document
-      .querySelector("#trade-entry")
-      ?.scrollIntoView({ behavior: "smooth" });
+    setForm(emptySimpleTradeForm());
+    setTotalCostOverridden(false);
   }
 
   async function submitTrade(event: FormEvent) {
@@ -107,76 +90,62 @@ export function ManualTrades({
     setBusy(true);
     setMessage("");
     try {
-      if (form.action === "exit" && !editingId) {
-        const match = findOpenTrade(openTrades, form.executionTicker);
+      if (form.action === "close") {
+        const match = findOpenTrade(openRows, form.ticker);
         if (!match) {
-          setMessage(
-            "No matching open manual trade was found for that execution ticker. Record an entry first, or use the row-level Exit action.",
-          );
+          setMessage("No matching open trade was found for that ticker.");
           return;
         }
         await mutate(
           `/manual-trades/${match.trade.id}/exits`,
           "POST",
-          buildManualExitPayload(form, match.result.quantityRemaining),
+          buildManualExitPayload(form, match.quantityRemaining),
         );
-        setMessage("Signal exit recorded.");
+        setMessage("Trade closed.");
         resetForm();
         return;
       }
 
-      await mutate(
-        editingId ? `/manual-trades/${editingId}` : "/manual-trades",
-        editingId ? "PUT" : "POST",
-        buildManualTradePayload(form),
-      );
-      setMessage(editingId ? "Signal action updated." : "Signal action recorded.");
+      await mutate("/manual-trades", "POST", buildManualTradePayload(form));
+      setMessage("Trade recorded.");
       resetForm();
     } catch (reason) {
       setMessage(
-        reason instanceof Error
-          ? reason.message
-          : "Signal action could not be saved.",
+        reason instanceof Error ? reason.message : "Trade could not be saved.",
       );
     } finally {
       setBusy(false);
     }
   }
 
-  async function deleteTrade(trade: ManualTrade) {
-    if (!window.confirm(`Delete ${trade.ticker} and all recorded exits?`)) return;
-    await mutate(`/manual-trades/${trade.id}`, "DELETE");
+  function beginCloseTrade(row: OpenTradeRow) {
+    setClosingTrade(row);
+    setCloseForm(emptyCloseForm(row));
   }
 
-  function beginExit(trade: ManualTrade) {
-    setExitTrade(trade);
-    setExitForm(emptyExitForm(trade));
-  }
-
-  async function submitExit(event: FormEvent) {
+  async function submitCloseTrade(event: FormEvent) {
     event.preventDefault();
-    if (!exitTrade) return;
+    if (!closingTrade) return;
     setBusy(true);
     setMessage("");
     try {
-      await mutate(`/manual-trades/${exitTrade.id}/exits`, "POST", {
-        ...exitForm,
-        exitPrice: Number(exitForm.exitPrice),
-        quantitySold: Number(exitForm.quantitySold),
-        fees: Number(exitForm.fees),
+      await mutate(`/manual-trades/${closingTrade.trade.id}/exits`, "POST", {
+        exitDate: closeForm.exitDate,
+        exitPrice: Number(closeForm.exitPrice),
+        quantitySold: Number(closeForm.quantitySold),
+        fees: Number(closeForm.fees || 0),
+        reason: "Close trade",
+        notes: closeForm.notes,
       });
-      setMessage("Signal exit recorded.");
-      setExitTrade(null);
+      setMessage("Trade closed.");
+      setClosingTrade(null);
     } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "Exit could not be saved.");
+      setMessage(
+        reason instanceof Error ? reason.message : "Trade could not be closed.",
+      );
     } finally {
       setBusy(false);
     }
-  }
-
-  async function deleteExit(tradeId: string, exitId: string) {
-    if (!window.confirm("Delete this exit record?")) return;
-    await mutate(`/manual-trades/${tradeId}/exits/${exitId}`, "DELETE");
   }
 
   return (
@@ -184,45 +153,37 @@ export function ManualTrades({
       {isExample && (
         <div className="example-banner">
           <Badge tone="amber">FAKE SAMPLE DATA</Badge>
-          These records demonstrate the interface only. Adding your first signal
-          action replaces example mode.
+          These records demonstrate the interface only. Adding your first manual
+          trade replaces example mode.
         </div>
       )}
 
       <form
-        className="entry-form panel signal-action-form"
+        className="entry-form panel simple-trade-form"
         id="trade-entry"
         onSubmit={submitTrade}
       >
         <div className="form-heading">
           <div>
-            <span>{editingId ? "Edit signal action" : "Record signal action"}</span>
-            <h3>{editingId ? "Update manual action" : "I acted on this signal"}</h3>
+            <span>Open trade · Close trade</span>
+            <h3>Record trade</h3>
             <p>
-              Use this to track what you personally acted on. This does not place
-              a broker trade.
+              This only records what you did manually. It does not place a broker
+              order.
             </p>
           </div>
-          {editingId && (
-            <button type="button" className="icon-button" onClick={resetForm}>
-              <X size={17} />
-              <span className="sr-only">Cancel edit</span>
-            </button>
-          )}
         </div>
 
         <div className="signal-action-helper">
           <label className="field">
-            <span>Prefill from scanner data</span>
+            <span>Prefill from signal</span>
             <select
-              aria-label="Prefill from scanner data"
+              aria-label="Prefill from signal"
               value=""
               onChange={(event) => applyPrefill(event.target.value)}
             >
-              <option value="">
-                Choose open model position, recent event, or ticker pair
-              </option>
-              {options.map((option) => (
+              <option value="">Choose an open model position or recent signal</option>
+              {signalOptions.map((option) => (
                 <option key={option.optionId} value={option.optionId}>
                   {option.label}
                 </option>
@@ -230,309 +191,182 @@ export function ManualTrades({
             </select>
           </label>
           <p>
-            Scanner suggestions only prefill the form. You can still edit every
-            field before saving.
+            Prefill only sets strategy, ticker, action and notes. Enter quantity,
+            price, total cost and date yourself.
           </p>
         </div>
 
-        <div className="form-grid">
+        <div className="form-grid simple-trade-grid">
           <SelectField
-            label="Strategy source"
+            label="Strategy"
             value={form.strategySource}
             onChange={(value) =>
               updateField(
                 "strategySource",
-                value as SignalActionFormState["strategySource"],
+                value as SimpleTradeFormState["strategySource"],
               )
             }
-            options={["Daily SuperTrend", "Nasdaq SMA200", "Manual / Discretionary"]}
+            options={STRATEGY_OPTIONS.map((option) => [option, option])}
+          />
+          <InputField
+            label="Ticker"
+            value={form.ticker}
+            onChange={(value) => updateField("ticker", value)}
+            placeholder="QQQ3.L"
+            required
           />
           <SelectField
             label="Action"
             value={form.action}
             onChange={(value) =>
-              updateField("action", value as SignalActionFormState["action"])
+              updateField("action", value as SimpleTradeFormState["action"])
             }
-            disabled={Boolean(editingId)}
             options={[
-              ["enter", "Buy / Enter"],
-              ["exit", "Sell / Exit"],
+              ["open", "Buy / Open long"],
+              ["close", "Sell / Close long"],
             ]}
           />
           <InputField
-            label="Signal ticker"
-            value={form.signalTicker}
-            onChange={(value) => updateField("signalTicker", value)}
-            placeholder="QQQ"
-            required
-          />
-          <InputField
-            label="Execution ticker"
-            value={form.executionTicker}
-            onChange={(value) => updateField("executionTicker", value)}
-            placeholder="QQQ3.L"
-            required
-          />
-          <InputField
-            label="Date/time"
+            label="Trade date"
             type="datetime-local"
-            value={form.actionAt}
-            onChange={(value) => updateField("actionAt", value)}
+            value={form.tradeDate}
+            onChange={(value) => updateField("tradeDate", value)}
             required
           />
           <InputField
-            label="Price (£)"
-            type="number"
-            value={form.price}
-            onChange={(value) => updateField("price", value)}
-            min="0.000001"
-            step="any"
-            required
-          />
-          <InputField
-            label="Amount invested (£)"
-            type="number"
-            value={form.amountInvested}
-            onChange={(value) => updateField("amountInvested", value)}
-            min="0.01"
-            step="0.01"
-            required
-          />
-          <InputField
-            label="Quantity optional"
+            label="Quantity"
             type="number"
             value={form.quantity}
             onChange={(value) => updateField("quantity", value)}
             min="0.000001"
             step="any"
-            placeholder={
-              derivedQuantity ? `≈ ${derivedQuantity}` : "Auto from amount ÷ price"
-            }
+            placeholder="10"
+            required
           />
           <InputField
-            label="Fees optional (£)"
+            label="Price"
+            type="number"
+            value={form.price}
+            onChange={(value) => updateField("price", value)}
+            min="0.000001"
+            step="any"
+            placeholder="479.00"
+            required
+          />
+          <InputField
+            label="Total cost"
+            type="number"
+            value={form.totalCost}
+            onChange={updateTotalCost}
+            min="0.01"
+            step="0.01"
+            placeholder="Auto: quantity × price"
+            required
+          />
+          <InputField
+            label="Fees"
             type="number"
             value={form.fees}
             onChange={(value) => updateField("fees", value)}
             min="0"
             step="0.01"
+            placeholder="Optional"
           />
           <label className="field field--full">
-            <span>Notes optional</span>
+            <span>Notes</span>
             <textarea
               value={form.notes}
               onChange={(event) => updateField("notes", event.target.value)}
               rows={3}
-              placeholder="What signal did you act on, and why?"
+              placeholder="Optional"
             />
           </label>
-
-          <details className="advanced-details field--full">
-            <summary>Advanced details</summary>
-            <div className="form-grid form-grid--advanced">
-              <SelectField
-                label="Risk tier"
-                value={form.riskTier}
-                onChange={(value) => updateField("riskTier", value)}
-                options={["CORE", "AGGRESSIVE", "SPECULATIVE", "EXCLUDED"]}
-              />
-              <InputField
-                label="Asset class"
-                value={form.assetClass}
-                onChange={(value) => updateField("assetClass", value)}
-              />
-              <BooleanField
-                label="Technology exposure?"
-                value={form.isTechnology}
-                onChange={(value) => updateField("isTechnology", value)}
-              />
-              <BooleanField
-                label="Single-stock exposure?"
-                value={form.isSingleStock}
-                onChange={(value) => updateField("isSingleStock", value)}
-              />
-              <SelectField
-                label="Leverage multiplier"
-                value={form.leverageMultiplier}
-                onChange={(value) => updateField("leverageMultiplier", value)}
-                options={[
-                  ["1", "1× / unleveraged"],
-                  ["2", "2×"],
-                  ["3", "3×"],
-                ]}
-              />
-              <SelectField
-                label="Record source"
-                value={form.source}
-                onChange={(value) => updateField("source", value)}
-                options={[
-                  ["manual", "Manual"],
-                  ["Discord alert", "Discord alert"],
-                  ["imported", "Imported"],
-                ]}
-              />
-              <InputField
-                label="Optional screenshot / link"
-                type="url"
-                value={form.referenceLink}
-                onChange={(value) => updateField("referenceLink", value)}
-                placeholder="https://…"
-              />
-              <label className="field field--wide">
-                <span>Signal reason</span>
-                <textarea
-                  value={form.entryReason}
-                  onChange={(event) => updateField("entryReason", event.target.value)}
-                  rows={3}
-                />
-              </label>
-              <BooleanField
-                label="Followed the system?"
-                value={form.followedSystem}
-                onChange={(value) => updateField("followedSystem", value)}
-              />
-              <BooleanField
-                label="Overrode the system?"
-                value={form.overrodeSystem}
-                onChange={(value) => updateField("overrodeSystem", value)}
-              />
-              <BooleanField
-                label="Checked the chart first?"
-                value={form.checkedChart}
-                onChange={(value) => updateField("checkedChart", value)}
-              />
-              <InputField
-                label="Emotion journal"
-                value={form.emotionalState}
-                onChange={(value) => updateField("emotionalState", value)}
-                placeholder="Optional"
-              />
-              <label className="field field--wide">
-                <span>Lesson / review note</span>
-                <textarea
-                  value={form.lesson}
-                  onChange={(event) => updateField("lesson", event.target.value)}
-                  rows={3}
-                />
-              </label>
-            </div>
-          </details>
         </div>
 
         <div className="form-actions">
           {message && <span className="form-message">{message}</span>}
           <button className="button button--primary" disabled={busy}>
-            {editingId ? <Save size={16} /> : <Plus size={16} />}
-            {editingId ? "Save signal action" : "Record signal action"}
+            <Plus size={16} /> Record trade
           </button>
         </div>
       </form>
 
-      <div className="journal-analytics signal-action-summary">
-        <SummaryCard label="Manual action log" value={`${rows.length} actions`}>
-          Entries and exits you personally recorded.
-        </SummaryCard>
-        <SummaryCard
-          label="Buy / enter"
-          value={`${rows.filter((row) => row.actionLabel === "Buy / Enter").length} actions`}
-        >
-          Signal actions that opened or added exposure.
-        </SummaryCard>
-        <SummaryCard
-          label="Sell / exit"
-          value={`${rows.filter((row) => row.actionLabel === "Sell / Exit").length} actions`}
-        >
-          Signal actions that reduced or closed exposure.
-        </SummaryCard>
-        <SummaryCard
-          label="Total logged amount"
-          value={formatMoney(rows.reduce((sum, row) => sum + row.amount, 0))}
-        >
-          Gross action amount across manual rows.
-        </SummaryCard>
-      </div>
+      <OpenTradesTable rows={openRows} onClose={beginCloseTrade} />
+      <ClosedTradesTable rows={closedRows} />
 
-      <ManualActionLogTable
-        rows={rows}
-        onEdit={beginEdit}
-        onDelete={deleteTrade}
-        onExit={beginExit}
-        onDeleteExit={deleteExit}
-      />
-
-      {exitTrade && (
+      {closingTrade && (
         <div className="modal-scrim" role="presentation">
           <form
             className="exit-modal"
-            onSubmit={submitExit}
-            aria-label="Record signal exit"
+            onSubmit={submitCloseTrade}
+            aria-label="Close trade"
           >
             <div className="form-heading">
               <div>
-                <span>Sell / exit action</span>
-                <h3>Record exit for {exitTrade.ticker}</h3>
-                <p>This logs what you did; it does not place a broker trade.</p>
+                <span>Close trade</span>
+                <h3>Close {closingTrade.ticker}</h3>
+                <p>
+                  This only records what you did manually. It does not place a
+                  broker order.
+                </p>
               </div>
               <button
                 type="button"
                 className="icon-button"
-                onClick={() => setExitTrade(null)}
-                aria-label="Close exit form"
+                onClick={() => setClosingTrade(null)}
+                aria-label="Close form"
               >
                 <X size={17} />
               </button>
             </div>
             <div className="form-grid form-grid--compact">
-              <ExitInput
-                label="Date/time"
+              <CloseInput
+                label="Exit date"
                 type="datetime-local"
-                value={exitForm.exitDate}
+                value={closeForm.exitDate}
                 onChange={(value) =>
-                  setExitForm((current) => ({ ...current, exitDate: value }))
+                  setCloseForm((current) => ({ ...current, exitDate: value }))
                 }
               />
-              <ExitInput
-                label="Price (£)"
+              <CloseInput
+                label="Exit price"
                 type="number"
-                value={exitForm.exitPrice}
+                value={closeForm.exitPrice}
                 onChange={(value) =>
-                  setExitForm((current) => ({ ...current, exitPrice: value }))
+                  setCloseForm((current) => ({ ...current, exitPrice: value }))
                 }
               />
-              <ExitInput
-                label="Quantity"
+              <CloseInput
+                label="Quantity to close"
                 type="number"
-                value={exitForm.quantitySold}
+                value={closeForm.quantitySold}
                 onChange={(value) =>
-                  setExitForm((current) => ({ ...current, quantitySold: value }))
+                  setCloseForm((current) => ({ ...current, quantitySold: value }))
                 }
               />
-              <ExitInput
-                label="Fees optional (£)"
+              <InputField
+                label="Exit fees"
                 type="number"
-                value={exitForm.fees}
+                value={closeForm.fees}
                 onChange={(value) =>
-                  setExitForm((current) => ({ ...current, fees: value }))
+                  setCloseForm((current) => ({ ...current, fees: value }))
                 }
-              />
-              <ExitInput
-                label="Reason"
-                value={exitForm.reason}
-                onChange={(value) =>
-                  setExitForm((current) => ({ ...current, reason: value }))
-                }
+                min="0"
+                step="0.01"
+                placeholder="Optional"
               />
               <label className="field field--full">
-                <span>Notes optional</span>
+                <span>Notes</span>
                 <textarea
                   rows={3}
-                  value={exitForm.notes}
+                  value={closeForm.notes}
                   onChange={(event) =>
-                    setExitForm((current) => ({
+                    setCloseForm((current) => ({
                       ...current,
                       notes: event.target.value,
                     }))
                   }
+                  placeholder="Optional"
                 />
               </label>
             </div>
@@ -540,12 +374,12 @@ export function ManualTrades({
               <button
                 type="button"
                 className="button button--secondary"
-                onClick={() => setExitTrade(null)}
+                onClick={() => setClosingTrade(null)}
               >
                 Cancel
               </button>
               <button className="button button--primary" disabled={busy}>
-                <Save size={16} /> Save exit
+                <Save size={16} /> Close trade
               </button>
             </div>
           </form>
@@ -555,135 +389,59 @@ export function ManualTrades({
   );
 }
 
-function ManualActionLogTable({
+function OpenTradesTable({
   rows,
-  onEdit,
-  onDelete,
-  onExit,
-  onDeleteExit,
+  onClose,
 }: {
-  rows: JournalActionRow[];
-  onEdit: (trade: ManualTrade) => void;
-  onDelete: (trade: ManualTrade) => void;
-  onExit: (trade: ManualTrade) => void;
-  onDeleteExit: (tradeId: string, exitId: string) => void;
+  rows: OpenTradeRow[];
+  onClose: (row: OpenTradeRow) => void;
 }) {
   return (
-    <section className="panel manual-table-panel" id="manual-action-log">
+    <section className="panel manual-table-panel" id="open-trades">
       <div className="panel-title-row">
         <div>
-          <span>Manual action log</span>
-          <h3>Signal actions you recorded</h3>
-          <p>
-            A clean journal of buys and sells taken from SuperTrend, SMA200, or
-            discretionary signals.
-          </p>
+          <span>Open trade</span>
+          <h3>Open trades</h3>
         </div>
-        <Badge tone="blue">{rows.length} actions</Badge>
+        <Badge tone="blue">{rows.length} open</Badge>
       </div>
       {rows.length === 0 ? (
-        <div className="empty-state">
-          No manual signal actions yet. Use Record signal action when you act on
-          a signal.
-        </div>
+        <div className="empty-state">No open manual trades yet.</div>
       ) : (
         <div className="table-scroll">
-          <table className="data-table manual-trade-table signal-action-table">
+          <table className="data-table manual-trade-table simple-trade-table">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Strategy source</th>
-                <th>Signal ticker</th>
-                <th>Execution ticker</th>
-                <th>Action</th>
-                <th>Price</th>
-                <th>Amount</th>
+                <th>Date opened</th>
+                <th>Strategy</th>
+                <th>Ticker</th>
                 <th>Quantity</th>
-                <th>P/L</th>
+                <th>Entry price</th>
+                <th>Total cost</th>
+                <th>Fees</th>
                 <th>Notes</th>
-                <th>Actions</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.actionId}>
-                  <td data-label="Date">
-                    <strong className="table-primary">{safeDate(row.date)}</strong>
+                <tr key={row.trade.id}>
+                  <td data-label="Date opened">{safeDate(row.dateOpened)}</td>
+                  <td data-label="Strategy">{row.strategySource}</td>
+                  <td data-label="Ticker">
+                    <strong className="table-primary">{row.ticker}</strong>
                   </td>
-                  <td data-label="Strategy source">
-                    <strong className="table-primary">{row.strategySource}</strong>
+                  <td data-label="Quantity">
+                    {formatNumber(row.quantityRemaining, 4)}
                   </td>
-                  <td data-label="Signal ticker">
-                    <strong className="table-primary">{row.signalTicker}</strong>
-                  </td>
-                  <td data-label="Execution ticker">
-                    <strong className="table-primary">{row.executionTicker}</strong>
-                  </td>
-                  <td data-label="Action">
-                    <Badge
-                      tone={row.actionLabel === "Buy / Enter" ? "green" : "red"}
-                    >
-                      {row.actionLabel}
-                    </Badge>
-                  </td>
-                  <td data-label="Price">{formatMoney(row.price, 2)}</td>
-                  <td data-label="Amount">{formatMoney(row.amount, 2)}</td>
-                  <td data-label="Quantity">{formatNumber(row.quantity, 4)}</td>
-                  <td data-label="P/L">
-                    {row.pnl === null ? (
-                      <span className="table-secondary">—</span>
-                    ) : (
-                      <PLValue money={row.pnl} />
-                    )}
-                  </td>
+                  <td data-label="Entry price">{formatMoney(row.entryPrice, 2)}</td>
+                  <td data-label="Total cost">{formatMoney(row.totalCost, 2)}</td>
+                  <td data-label="Fees">{formatMoney(row.fees, 2)}</td>
                   <td data-label="Notes">
                     <span className="table-secondary">{row.notes || "—"}</span>
-                    <AdvancedRowDetails trade={row.trade} />
                   </td>
-                  <td data-label="Actions">
-                    <div className="row-actions">
-                      {row.canRecordExit && (
-                        <button onClick={() => onExit(row.trade)} title="Record exit">
-                          <Plus size={15} /> Exit
-                        </button>
-                      )}
-                      {row.canEditTrade && (
-                        <button onClick={() => onEdit(row.trade)} title="Edit trade">
-                          <Pencil size={15} /> Edit
-                        </button>
-                      )}
-                      {row.canEditTrade ? (
-                        <button
-                          className="danger-action"
-                          onClick={() => onDelete(row.trade)}
-                          title="Delete trade"
-                        >
-                          <Trash2 size={15} /> Delete
-                        </button>
-                      ) : (
-                        row.exitId !== null && (
-                          <button
-                            className="danger-action"
-                            onClick={() =>
-                              onDeleteExit(row.trade.id, String(row.exitId))
-                            }
-                            title="Delete exit"
-                          >
-                            <Trash2 size={15} /> Delete exit
-                          </button>
-                        )
-                      )}
-                      {row.referenceLink && (
-                        <a
-                          href={row.referenceLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="Open reference link"
-                        >
-                          <ExternalLink size={15} /> Link
-                        </a>
-                      )}
-                    </div>
+                  <td data-label="Action">
+                    <button onClick={() => onClose(row)}>Close trade</button>
                   </td>
                 </tr>
               ))}
@@ -695,49 +453,63 @@ function ManualActionLogTable({
   );
 }
 
-function AdvancedRowDetails({ trade }: { trade: ManualTrade }) {
+function ClosedTradesTable({ rows }: { rows: ClosedTradeRow[] }) {
   return (
-    <details className="manual-action-row-details">
-      <summary>Advanced details</summary>
-      <dl>
-        <Detail label="Risk tier" value={trade.riskTier} />
-        <Detail label="Asset class" value={trade.assetClass} />
-        <Detail
-          label="Technology exposure"
-          value={trade.isTechnology ? "Yes" : "No"}
-        />
-        <Detail
-          label="Single-stock exposure"
-          value={trade.isSingleStock ? "Yes" : "No"}
-        />
-        <Detail
-          label="Leverage multiplier"
-          value={`${trade.leverageMultiplier ?? "—"}×`}
-        />
-        <Detail
-          label="Emotion journal"
-          value={trade.journal?.emotionalState || "—"}
-        />
-      </dl>
-    </details>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-  children,
-}: {
-  label: string;
-  value: string;
-  children: string;
-}) {
-  return (
-    <article>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <p>{children}</p>
-    </article>
+    <section className="panel manual-table-panel" id="closed-trades">
+      <div className="panel-title-row">
+        <div>
+          <span>Close trade</span>
+          <h3>Closed trades</h3>
+        </div>
+        <Badge tone="blue">{rows.length} closed</Badge>
+      </div>
+      {rows.length === 0 ? (
+        <div className="empty-state">No closed manual trades yet.</div>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table manual-trade-table simple-trade-table">
+            <thead>
+              <tr>
+                <th>Date opened</th>
+                <th>Date closed</th>
+                <th>Strategy</th>
+                <th>Ticker</th>
+                <th>Quantity</th>
+                <th>Entry price</th>
+                <th>Exit price</th>
+                <th>Total cost</th>
+                <th>Total P/L</th>
+                <th>P/L %</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.trade.id}>
+                  <td data-label="Date opened">{safeDate(row.dateOpened)}</td>
+                  <td data-label="Date closed">{safeDate(row.dateClosed)}</td>
+                  <td data-label="Strategy">{row.strategySource}</td>
+                  <td data-label="Ticker">
+                    <strong className="table-primary">{row.ticker}</strong>
+                  </td>
+                  <td data-label="Quantity">{formatNumber(row.quantity, 4)}</td>
+                  <td data-label="Entry price">{formatMoney(row.entryPrice, 2)}</td>
+                  <td data-label="Exit price">{formatMoney(row.exitPrice, 2)}</td>
+                  <td data-label="Total cost">{formatMoney(row.totalCost, 2)}</td>
+                  <td data-label="Total P/L">
+                    <PLValue money={row.totalPnl} />
+                  </td>
+                  <td data-label="P/L %">{formatNumber(row.pnlPercent, 2)}%</td>
+                  <td data-label="Notes">
+                    <span className="table-secondary">{row.notes || "—"}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -746,56 +518,23 @@ function SelectField({
   value,
   options,
   onChange,
-  disabled,
 }: {
   label: string;
   value: string;
-  options: Array<string | [string, string]>;
+  options: Array<readonly [string, string]>;
   onChange: (value: string) => void;
-  disabled?: boolean;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
-      >
-        {options.map((option) => {
-          const [optionValue, text] = Array.isArray(option)
-            ? option
-            : [option, option];
-          return (
-            <option key={optionValue} value={optionValue}>
-              {text}
-            </option>
-          );
-        })}
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map(([optionValue, text]) => (
+          <option key={optionValue} value={optionValue}>
+            {text}
+          </option>
+        ))}
       </select>
     </label>
-  );
-}
-
-function BooleanField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <SelectField
-      label={label}
-      value={value}
-      onChange={onChange}
-      options={[
-        ["false", "No"],
-        ["true", "Yes"],
-      ]}
-    />
   );
 }
 
@@ -808,7 +547,7 @@ function InputField({
   label: string;
   value: string;
   onChange: (value: string) => void;
-} & Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange" | "value">) {
+} & Omit<InputHTMLAttributes<HTMLInputElement>, "onChange" | "value">) {
   return (
     <label className="field">
       <span>{label}</span>
@@ -821,7 +560,7 @@ function InputField({
   );
 }
 
-function ExitInput({
+function CloseInput({
   label,
   value,
   onChange,
@@ -830,49 +569,48 @@ function ExitInput({
   label: string;
   value: string;
   onChange: (value: string) => void;
-} & Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange" | "value">) {
-  return <InputField label={label} value={value} onChange={onChange} {...props} required />;
-}
-
-function Detail({ label, value }: { label: string; value: string | undefined }) {
+} & Omit<InputHTMLAttributes<HTMLInputElement>, "onChange" | "value">) {
   return (
-    <div>
-      <dt>{label}</dt>
-      <dd>{value || "—"}</dd>
-    </div>
+    <InputField
+      label={label}
+      value={value}
+      onChange={onChange}
+      min="0.000001"
+      step="any"
+      required
+      {...props}
+    />
   );
 }
 
 function PLValue({ money }: { money: number }) {
   return (
-    <div className={money >= 0 ? "pl-stack pl-stack--up" : "pl-stack pl-stack--down"}>
+    <span className={money >= 0 ? "pl-stack pl-stack--up" : "pl-stack pl-stack--down"}>
       <strong>
         {money >= 0 ? "+" : ""}
         {formatMoney(money, 2)}
       </strong>
-    </div>
+    </span>
   );
 }
 
-function findOpenTrade(
-  items: Array<{
-    trade: ManualTrade;
-    result: ReturnType<typeof calculateTrade>;
-  }>,
-  executionTicker: string,
-) {
-  const target = executionTicker.trim().toUpperCase();
-  return items.find((item) => item.trade.ticker.trim().toUpperCase() === target);
+function findOpenTrade(rows: OpenTradeRow[], ticker: string) {
+  const target = ticker.trim().toUpperCase();
+  return rows.find((row) => row.ticker.trim().toUpperCase() === target);
 }
 
-function quantityPreview(form: SignalActionFormState) {
-  if (form.quantity) return "";
-  const amount = Number(form.amountInvested);
-  const price = Number(form.price);
-  if (!Number.isFinite(amount) || !Number.isFinite(price) || amount <= 0 || price <= 0) {
+function calculatedTotalCost(quantity: string, price: string) {
+  const numericQuantity = Number(quantity);
+  const numericPrice = Number(price);
+  if (
+    !Number.isFinite(numericQuantity) ||
+    !Number.isFinite(numericPrice) ||
+    numericQuantity <= 0 ||
+    numericPrice <= 0
+  ) {
     return "";
   }
-  return formatNumber(amount / price, 4);
+  return (numericQuantity * numericPrice).toFixed(2);
 }
 
 function safeDate(value: string) {
@@ -883,14 +621,13 @@ function safeDate(value: string) {
   }
 }
 
-function emptyExitForm(trade: ManualTrade | null) {
-  const result = trade ? calculateTrade(trade) : null;
+function emptyCloseForm(row: OpenTradeRow | null): CloseTradeState {
+  const fallbackPrice = row?.trade.currentPrice || row?.entryPrice || "";
   return {
     exitDate: toDateTimeLocal(new Date().toISOString()),
-    exitPrice: trade ? String(trade.currentPrice) : "",
-    quantitySold: result ? String(result.quantityRemaining) : "",
+    exitPrice: fallbackPrice ? String(fallbackPrice) : "",
+    quantitySold: row ? String(row.quantityRemaining) : "",
     fees: "0",
-    reason: "Exit signal",
     notes: "",
   };
 }

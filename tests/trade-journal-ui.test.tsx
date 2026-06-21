@@ -10,10 +10,13 @@ import type {
   MultiStrategySnapshot,
 } from "../src/types";
 import {
-  buildJournalActionRows,
+  applySignalActionOption,
+  buildClosedTradeRows,
+  buildManualExitPayload,
   buildManualTradePayload,
+  buildOpenTradeRows,
   buildSignalActionOptions,
-  emptySignalActionForm,
+  emptySimpleTradeForm,
 } from "../src/utils/tradeJournalSignalActions";
 
 Object.assign(globalThis, { React });
@@ -162,7 +165,7 @@ function trade(overrides: Partial<ManualTrade> = {}): ManualTrade {
     quantity: 100,
     amountInvested: 1000,
     fees: 5,
-    notes: "Acted on the ARM entry signal.",
+    notes: "Bought after the ARM entry signal.",
     source: "manual",
     referenceLink: "https://example.com/chart",
     currentPrice: 11,
@@ -192,114 +195,185 @@ function render(trades: ManualTrade[] = []) {
   );
 }
 
-test("simplified trade form renders as a signal action form", () => {
-  const html = render();
+function mainFormHtml(html: string) {
+  const start = html.indexOf("<form");
+  const end = html.indexOf("</form>", start);
+  return html.slice(start, end + "</form>".length);
+}
 
-  assert.match(html, /Record signal action/);
-  assert.match(html, /I acted on this signal/);
-  assert.match(html, /This does not place a broker trade/);
-  assert.match(html, /Strategy source/);
-  assert.match(html, /Signal ticker/);
-  assert.match(html, /Execution ticker/);
-  assert.match(html, /Buy \/ Enter/);
-  assert.match(html, /Sell \/ Exit/);
+test("main form renders only the simple trade fields by default", () => {
+  const form = mainFormHtml(render());
+
+  assert.match(form, /Record trade/);
+  assert.match(
+    form,
+    /This only records what you did manually\. It does not place a broker order\./,
+  );
+  assert.match(form, /Strategy/);
+  assert.match(form, /Ticker/);
+  assert.match(form, /Action/);
+  assert.match(form, /Buy \/ Open long/);
+  assert.match(form, /Sell \/ Close long/);
+  assert.match(form, /Trade date/);
+  assert.match(form, /Quantity/);
+  assert.match(form, /Price/);
+  assert.match(form, /Total cost/);
+  assert.match(form, /Fees/);
+  assert.match(form, /Notes/);
+  assert.doesNotMatch(form, /Signal ticker/);
+  assert.doesNotMatch(form, /Execution ticker/);
+  assert.doesNotMatch(form, /Amount invested/);
 });
 
-test("current scanner ticker pairs can be used in the form if available", () => {
-  const options = buildSignalActionOptions(monitor());
+test("main form does not show legacy accounting fields by default", () => {
+  const form = mainFormHtml(render([trade()]));
 
-  assert.ok(
-    options.some(
-      (option) =>
-        option.label === "Current pair · Daily SuperTrend · ARM → 3ARM.L",
-    ),
-  );
-  assert.ok(
-    options.some(
-      (option) =>
-        option.label === "Open model position · Daily SuperTrend · ARM → 3ARM.L",
-    ),
-  );
-  assert.ok(
-    options.some(
-      (option) =>
-        option.label === "Recent exit · Daily SuperTrend · SMH → 3SMH.L",
-    ),
-  );
-  assert.ok(
-    options.some(
-      (option) =>
-        option.label === "Current pair · Nasdaq SMA200 · QQQ → QQQ3.L",
-    ),
-  );
+  assert.doesNotMatch(form, /Risk tier/);
+  assert.doesNotMatch(form, /Asset class/);
+  assert.doesNotMatch(form, /Technology exposure/);
+  assert.doesNotMatch(form, /Single-stock exposure/);
+  assert.doesNotMatch(form, /Leverage multiplier/);
+  assert.doesNotMatch(form, /Emotion journal/);
+  assert.doesNotMatch(form, /Followed the system/);
+  assert.doesNotMatch(form, /Overrode the system/);
+  assert.doesNotMatch(form, /Checked the chart/);
+  assert.doesNotMatch(form, /Lesson/);
 });
 
-test("user can create a signal action trade payload with custom ticker input", () => {
+test("strategy dropdown always includes the three supported strategies", () => {
+  const form = mainFormHtml(render());
+
+  assert.match(form, /Daily SuperTrend/);
+  assert.match(form, /Nasdaq SMA200/);
+  assert.match(form, /Manual \/ Discretionary/);
+});
+
+test("user can create a simple open trade payload", () => {
   const form = {
-    ...emptySignalActionForm(),
-    strategySource: "Manual / Discretionary" as const,
-    signalTicker: "custom",
-    executionTicker: "custom3.l",
-    price: "10",
-    amountInvested: "1000",
-    quantity: "",
-    fees: "2",
-    notes: "Custom manual action.",
+    ...emptySimpleTradeForm(),
+    strategySource: "Nasdaq SMA200" as const,
+    ticker: "qqq3.l",
+    tradeDate: "2026-06-21T10:30",
+    quantity: "10",
+    price: "479",
+    totalCost: "4790",
+    fees: "3",
+    notes: "Opened after SMA200 risk-on signal.",
   };
 
   const payload = buildManualTradePayload(form);
 
-  assert.equal(payload.strategyName, "Manual / Discretionary");
-  assert.equal(payload.assetName, "CUSTOM");
-  assert.equal(payload.ticker, "CUSTOM3.L");
-  assert.equal(payload.quantity, 100);
-  assert.equal(payload.amountInvested, 1000);
-  assert.equal(payload.journal.entryReason, "Custom manual action.");
+  assert.equal(payload.strategyName, "Nasdaq SMA200");
+  assert.equal(payload.sleeve, "SMA200 Regime");
+  assert.equal(payload.assetName, "QQQ3.L");
+  assert.equal(payload.ticker, "QQQ3.L");
+  assert.equal(payload.entryDate, "2026-06-21T10:30");
+  assert.equal(payload.quantity, 10);
+  assert.equal(payload.entryPrice, 479);
+  assert.equal(payload.amountInvested, 4790);
+  assert.equal(payload.fees, 3);
+  assert.equal(payload.source, "manual");
 });
 
-test("old existing trade fields and data are preserved in advanced details", () => {
+test("open trade appears in Open trades table", () => {
   const html = render([trade()]);
+  const rows = buildOpenTradeRows([trade()]);
 
-  assert.match(html, /Advanced details/);
-  assert.match(html, /Risk tier/);
-  assert.match(html, /SPECULATIVE/);
-  assert.match(html, /Asset class/);
-  assert.match(html, /Thematic ETF/);
-  assert.match(html, /Technology exposure/);
-  assert.match(html, /Single-stock exposure/);
-  assert.match(html, /Leverage multiplier/);
-  assert.match(html, /Emotion journal/);
-  assert.match(html, /Confident/);
+  assert.equal(rows.length, 1);
+  assert.match(html, /Open trades/);
+  assert.match(html, /3ARM\.L/);
+  assert.match(html, /Bought after the ARM entry signal/);
+  assert.match(html, /Close trade/);
 });
 
-test("journal table renders signal actions correctly", () => {
+test("user can close a trade", () => {
+  const form = {
+    ...emptySimpleTradeForm(),
+    action: "close" as const,
+    ticker: "3ARM.L",
+    tradeDate: "2026-06-22T11:00",
+    quantity: "100",
+    price: "12",
+    totalCost: "1200",
+    fees: "1",
+    notes: "Closed after exit signal.",
+  };
+
+  const payload = buildManualExitPayload(form, 100);
+
+  assert.equal(payload.exitDate, "2026-06-22T11:00");
+  assert.equal(payload.exitPrice, 12);
+  assert.equal(payload.quantitySold, 100);
+  assert.equal(payload.fees, 1);
+  assert.equal(payload.reason, "Close trade");
+  assert.equal(payload.notes, "Closed after exit signal.");
+});
+
+test("closed trade appears in Closed trades table", () => {
   const item = trade({
     exits: [
       {
         id: "exit-1",
-        exitDate: "2026-06-21T10:30",
+        exitDate: "2026-06-22T11:00",
         exitPrice: 12,
-        quantitySold: 40,
+        quantitySold: 100,
         fees: 1,
-        reason: "Exit signal",
-        notes: "Sold after red signal.",
+        reason: "Close trade",
+        notes: "Closed after exit signal.",
       },
     ],
   });
-  const rows = buildJournalActionRows([item]);
+  const rows = buildClosedTradeRows([item]);
   const html = render([item]);
 
-  assert.equal(rows.length, 2);
-  assert.deepEqual(
-    rows.map((row) => row.actionLabel),
-    ["Sell / Exit", "Buy / Enter"],
-  );
-  assert.match(html, /Manual action log/);
-  assert.match(html, /Daily SuperTrend/);
-  assert.match(html, /ARM/);
+  assert.equal(rows.length, 1);
+  assert.match(html, /Closed trades/);
   assert.match(html, /3ARM\.L/);
-  assert.match(html, /Buy \/ Enter/);
-  assert.match(html, /Sell \/ Exit/);
-  assert.match(html, /Acted on the ARM entry signal/);
-  assert.match(html, /Sold after red signal/);
+  assert.match(html, /Closed after exit signal/);
+  assert.match(html, /Total P\/L/);
+});
+
+test("old legacy trade data is preserved while rendering the simple workflow", () => {
+  const legacy = trade();
+
+  buildOpenTradeRows([legacy]);
+
+  assert.equal(legacy.riskTier, "SPECULATIVE");
+  assert.equal(legacy.assetClass, "Thematic ETF");
+  assert.equal(legacy.isTechnology, true);
+  assert.equal(legacy.isSingleStock, true);
+  assert.equal(legacy.leverageMultiplier, 3);
+  assert.equal(legacy.journal?.emotionalState, "Confident");
+});
+
+test("scanner prefill fills strategy, ticker, action and notes only", () => {
+  const options = buildSignalActionOptions(monitor());
+  const position = options.find(
+    (option) =>
+      option.label === "Open model position · Daily SuperTrend · 3ARM.L",
+  );
+  const exit = options.find(
+    (option) => option.label === "Recent exit · Daily SuperTrend · 3SMH.L",
+  );
+
+  assert.ok(position);
+  assert.ok(exit);
+
+  const original = {
+    ...emptySimpleTradeForm(),
+    tradeDate: "2026-06-21T10:30",
+    quantity: "10",
+    price: "479",
+    totalCost: "4790",
+  };
+  const updated = applySignalActionOption(original, exit);
+
+  assert.equal(updated.strategySource, "Daily SuperTrend");
+  assert.equal(updated.ticker, "3SMH.L");
+  assert.equal(updated.action, "close");
+  assert.equal(updated.notes, "SuperTrend flipped red.");
+  assert.equal(updated.tradeDate, "2026-06-21T10:30");
+  assert.equal(updated.quantity, "10");
+  assert.equal(updated.price, "479");
+  assert.equal(updated.totalCost, "4790");
 });
