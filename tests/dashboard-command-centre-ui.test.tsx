@@ -5,10 +5,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { DashboardCommandCentre } from "../src/components/DashboardCommandCentre";
 import type {
   DashboardData,
+  ManualTrade,
   MultiStrategyRecord,
   MultiStrategySnapshot,
   SignalEvent,
 } from "../src/types";
+import { buildActualTradeEquityModel } from "../src/utils/actualTradeEquity";
 import { buildDashboardCommandCentreModel } from "../src/utils/dashboardCommandCentre";
 
 Object.assign(globalThis, { React });
@@ -202,6 +204,43 @@ function signalEvent(overrides: Partial<SignalEvent>): SignalEvent {
   };
 }
 
+function manualTrade(overrides: Partial<ManualTrade> = {}): ManualTrade {
+  return {
+    id: "manual-arm",
+    strategyName: "Daily SuperTrend",
+    sleeve: "SuperTrend",
+    assetName: "3ARM.L",
+    ticker: "3ARM.L",
+    direction: "long",
+    riskTier: "CORE",
+    assetClass: "Manual trade",
+    isTechnology: false,
+    isSingleStock: false,
+    leverageMultiplier: 1,
+    entryDate: "2026-06-18T10:00:00.000Z",
+    entryPrice: 10,
+    quantity: 10,
+    amountInvested: 100,
+    fees: 1,
+    notes: "Manual ARM trade.",
+    source: "manual",
+    referenceLink: "",
+    currentPrice: 12,
+    journal: {
+      entryReason: "Manual action.",
+      followedSystem: false,
+      overrodeSystem: false,
+      emotionalState: "",
+      checkedChart: false,
+      lesson: "",
+    },
+    exits: [],
+    createdAt: "2026-06-18T10:01:00.000Z",
+    updatedAt: "2026-06-21T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function dashboard(
   snapshotValue: MultiStrategySnapshot | null = snapshot(),
   overrides: Partial<DashboardData> = {},
@@ -249,12 +288,49 @@ function dashboard(
       providers: {},
       retention: { retained: 0, maximum: 500 },
     },
+    manualTrades: {
+      isExample: false,
+      trades: [
+        manualTrade(),
+        manualTrade({
+          id: "manual-qqq-closed",
+          strategyName: "Nasdaq SMA200",
+          sleeve: "SMA200 Regime",
+          assetName: "QQQ3.L",
+          ticker: "QQQ3.L",
+          entryDate: "2026-06-17T10:00:00.000Z",
+          entryPrice: 50,
+          quantity: 4,
+          amountInvested: 200,
+          fees: 2,
+          currentPrice: 58,
+          notes: "Manual QQQ3 trade.",
+          exits: [
+            {
+              id: "exit-qqq",
+              exitDate: "2026-06-20T11:00:00.000Z",
+              exitPrice: 60,
+              quantitySold: 4,
+              fees: 1,
+              reason: "Close trade",
+              notes: "Closed QQQ3 trade.",
+            },
+          ],
+        }),
+      ],
+    },
     ...overrides,
   } as DashboardData;
 }
 
 function render(data: DashboardData) {
   return renderToStaticMarkup(createElement(DashboardCommandCentre, { data }));
+}
+
+function actualTradePanelHtml(html: string) {
+  const start = html.indexOf("actual-trade-equity-panel");
+  const end = html.indexOf("</section>", start);
+  return start >= 0 && end >= 0 ? html.slice(start, end) : "";
 }
 
 test("dashboard shows scanner current state", () => {
@@ -265,6 +341,16 @@ test("dashboard shows scanner current state", () => {
   assert.match(html, /Market data freshness/);
   assert.match(html, /Active strategies/);
   assert.match(html, /2/);
+});
+
+test("dashboard typography layout still renders command-centre sections", () => {
+  const html = render(dashboard());
+
+  assert.match(html, /Action needed/);
+  assert.match(html, /Current model positions/);
+  assert.match(html, /Daily SuperTrend/);
+  assert.match(html, /Nasdaq SMA200/);
+  assert.match(html, /Recent signal history/);
 });
 
 test("action-needed section excludes old scannerError events when scanner is healthy", () => {
@@ -312,6 +398,101 @@ test("SMA200 summary renders", () => {
   assert.match(html, /Reference ticker/);
   assert.match(html, /QQQ3\.L/);
   assert.match(html, /4\.2% above SMA200/);
+});
+
+test("actual trade equity chart renders when manual trade data exists", () => {
+  const html = render(dashboard());
+
+  assert.match(html, /Actual trade equity/);
+  assert.match(html, /Actual trade equity chart/);
+  assert.match(html, /Based only on trades you manually recorded/);
+  assert.match(html, /This is not broker-synced/);
+  assert.match(html, /Total invested/);
+  assert.match(html, /Realised P\/L/);
+  assert.match(html, /Unrealised P\/L/);
+});
+
+test("actual trade equity empty state renders when no manual trades exist", () => {
+  const html = render(
+    dashboard(snapshot(), {
+      manualTrades: { isExample: false, trades: [] },
+    } as Partial<DashboardData>),
+  );
+
+  assert.match(html, /No manual trades recorded yet/);
+  assert.match(
+    html,
+    /Record trades in Trade Journal to build your actual equity curve/,
+  );
+});
+
+test("realised P/L is calculated from closed trades", () => {
+  const model = buildActualTradeEquityModel([
+    manualTrade({
+      entryPrice: 50,
+      quantity: 4,
+      amountInvested: 200,
+      fees: 2,
+      currentPrice: 58,
+      exits: [
+        {
+          id: "exit-1",
+          exitDate: "2026-06-20T11:00:00.000Z",
+          exitPrice: 60,
+          quantitySold: 4,
+          fees: 1,
+          reason: "Close trade",
+          notes: "",
+        },
+      ],
+    }),
+  ]);
+
+  assert.equal(model.realisedPnl, 37);
+  assert.equal(model.closedTrades, 1);
+  assert.equal(model.points.at(-1)?.realisedPnl, 37);
+});
+
+test("open trade unrealised P/L is included only when current price is available", () => {
+  const withPrice = buildActualTradeEquityModel([
+    manualTrade({ entryPrice: 10, quantity: 10, amountInvested: 100, fees: 1, currentPrice: 12 }),
+  ]);
+  const withoutPrice = buildActualTradeEquityModel([
+    manualTrade({
+      entryPrice: 10,
+      quantity: 10,
+      amountInvested: 100,
+      fees: 1,
+      currentPrice: undefined as unknown as number,
+    }),
+  ]);
+
+  assert.equal(withPrice.unrealisedPnl, 19);
+  assert.equal(withPrice.totalPnl, 19);
+  assert.equal(withPrice.hasUnrealisedEstimate, true);
+  assert.equal(withoutPrice.unrealisedPnl, null);
+  assert.equal(withoutPrice.totalPnl, 0);
+  assert.equal(withoutPrice.hasUnrealisedEstimate, false);
+});
+
+test("scanner model data is not used as actual trade equity", () => {
+  const noTrades = buildActualTradeEquityModel([]);
+  const hugeScannerModel = dashboard(snapshot({
+    strategies: [
+      strategy("daily-supertrend", { modelValue: 999_999 }),
+      strategy("nasdaq-sma200-3x", { modelValue: 888_888 }),
+    ],
+  }), {
+    manualTrades: { isExample: false, trades: [] },
+  } as Partial<DashboardData>);
+  const html = render(hugeScannerModel);
+  const actualPanel = actualTradePanelHtml(html);
+
+  assert.equal(noTrades.hasTrades, false);
+  assert.equal(noTrades.totalPnl, 0);
+  assert.match(actualPanel, /No manual trades recorded yet/);
+  assert.doesNotMatch(actualPanel, /999,999/);
+  assert.doesNotMatch(actualPanel, /888,888/);
 });
 
 test("scanner error state still displays when scanner is actually in error", () => {

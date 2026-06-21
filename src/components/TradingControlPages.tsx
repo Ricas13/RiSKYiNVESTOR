@@ -88,7 +88,7 @@ export function TradingControlPage({
 
 function ControlDashboard({ data }: { data: DashboardData }) {
   return (
-    <div className="control-page-stack">
+    <div className="control-page-stack dashboard-page-stack">
       <PageHeading
         eyebrow="Dashboard"
         title="Signal control room"
