@@ -1,6 +1,5 @@
 import type {
   DashboardData,
-  MultiStrategyEvent,
   MultiStrategyPosition,
   MultiStrategyRecord,
   SignalEvent,
@@ -10,9 +9,15 @@ import {
   type Sma200SignalSummary,
 } from "./signalMonitorRows";
 import { collectSnapshotPerformanceWarnings } from "./modelWarnings";
+import { currentSignalActions } from "./signalEventAlerts";
 
 export type DashboardScannerStatus = "current" | "stale" | "error" | "awaiting";
-export type DashboardActionType = "entry" | "exit" | "risk_on" | "risk_off";
+export type DashboardActionType =
+  | "entry"
+  | "exit"
+  | "risk_on"
+  | "risk_off"
+  | "scanner_error";
 
 export interface DashboardScannerHealth {
   status: DashboardScannerStatus;
@@ -76,8 +81,6 @@ export interface DashboardCommandCentreModel {
   scannerErrorsHiddenFromHistory: boolean;
 }
 
-const recentActionDays = 7;
-
 export function buildDashboardCommandCentreModel(
   data: DashboardData,
 ): DashboardCommandCentreModel {
@@ -101,7 +104,7 @@ export function buildDashboardCommandCentreModel(
   return {
     hasScannerSnapshot: Boolean(snapshot),
     scanner,
-    actionItems: buildActionItems(strategies, scanner.generatedAt),
+    actionItems: buildActionItems(data.signalEvents.events, strategies, scanner),
     currentModelPositions: buildCurrentModelPositions(strategies),
     superTrend: {
       ...signalMonitor.summary,
@@ -188,36 +191,40 @@ function buildScannerHealth(data: DashboardData): DashboardScannerHealth {
 }
 
 function buildActionItems(
+  events: SignalEvent[],
   strategies: MultiStrategyRecord[],
-  generatedAt: string | null,
+  scanner: DashboardScannerHealth,
 ) {
-  return strategies
-    .flatMap((strategy) =>
-      strategy.events.flatMap((event) => {
-        const eventType = dashboardActionType(strategy, event);
-        if (!eventType || !withinRecentCalendarDays(event.occurredAt, generatedAt)) {
-          return [];
-        }
-        return [
-          {
-            key: event.eventId,
-            strategyName: strategy.name,
-            signalTicker: event.signalTicker,
-            executionTicker: event.executionTicker,
-            eventType,
-            occurredAt: event.occurredAt,
-            reason: event.reason,
-            modelPositionOpen: Boolean(
+  return currentSignalActions(events, {
+    scannerStatus: scanner.status,
+    scannerGeneratedAt: scanner.generatedAt,
+  })
+    .flatMap((event) => {
+      const strategy = strategies.find(
+        (candidate) => candidate.strategyId === event.strategyId,
+      );
+      const eventType = dashboardActionType(event);
+      if (!eventType) return [];
+      return [
+        {
+          key: event.eventId,
+          strategyName: event.strategyName,
+          signalTicker: event.underlyingTicker,
+          executionTicker: event.tradeTicker,
+          eventType,
+          occurredAt: event.occurredAt,
+          reason: event.reasonText,
+          modelPositionOpen: Boolean(
+            strategy &&
               findPosition(
                 strategy.virtualPositions,
-                event.signalTicker,
-                event.executionTicker,
+                event.underlyingTicker,
+                event.tradeTicker,
               ),
-            ),
-          },
-        ];
-      }),
-    )
+          ),
+        },
+      ];
+    })
     .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
 }
 
@@ -243,39 +250,18 @@ function buildCurrentModelPositions(strategies: MultiStrategyRecord[]) {
     });
 }
 
-function dashboardActionType(
-  strategy: MultiStrategyRecord,
-  event: MultiStrategyEvent,
-): DashboardActionType | null {
-  if (event.eventType !== "entry" && event.eventType !== "exit") {
+function dashboardActionType(event: SignalEvent): DashboardActionType | null {
+  if (event.signalState === "scanner_error") return "scanner_error";
+  if (
+    event.signalState !== "actionable_entry" &&
+    event.signalState !== "actionable_exit"
+  ) {
     return null;
   }
-  if (strategy.strategyId === "nasdaq-sma200-3x") {
-    return event.eventType === "entry" ? "risk_on" : "risk_off";
+  if (event.strategyId === "nasdaq-sma200-3x") {
+    return event.signalState === "actionable_entry" ? "risk_on" : "risk_off";
   }
-  return event.eventType;
-}
-
-function withinRecentCalendarDays(value: string, anchor: string | null) {
-  const date = parseDate(value);
-  const anchorDate = parseDate(anchor);
-  if (!date || !anchorDate) return false;
-  const start = new Date(
-    Date.UTC(
-      anchorDate.getUTCFullYear(),
-      anchorDate.getUTCMonth(),
-      anchorDate.getUTCDate(),
-    ),
-  );
-  start.setUTCDate(start.getUTCDate() - recentActionDays + 1);
-  const end = new Date(
-    Date.UTC(
-      anchorDate.getUTCFullYear(),
-      anchorDate.getUTCMonth(),
-      anchorDate.getUTCDate() + 1,
-    ),
-  );
-  return date >= start && date < end;
+  return event.signalState === "actionable_entry" ? "entry" : "exit";
 }
 
 function findPosition(
@@ -329,10 +315,4 @@ function compactUnique(values: Array<string | null | undefined>) {
 
 function sameTicker(left: string, right: string) {
   return left.trim().toUpperCase() === right.trim().toUpperCase();
-}
-
-function parseDate(value: string | null) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
 }

@@ -58,6 +58,9 @@ export interface SignalEvent {
   rawSourceReference: string;
   isActionable: boolean;
   isAcknowledged: boolean;
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
+  acknowledgementNote: string | null;
   discordDeliveryEligible: boolean;
   createdAt: string;
   updatedAt: string;
@@ -364,6 +367,15 @@ export function validateCanonicalSignalEvent(value: unknown): SignalEvent {
     rawSourceReference: requiredText(input, "rawSourceReference", 500),
     isActionable: booleanValue(input, "isActionable"),
     isAcknowledged: booleanValue(input, "isAcknowledged"),
+    acknowledgedAt: input.isAcknowledged
+      ? nullableIsoDate(input.acknowledgedAt, "acknowledgedAt")
+      : null,
+    acknowledgedBy: input.isAcknowledged
+      ? optionalText(input.acknowledgedBy, 200) || null
+      : null,
+    acknowledgementNote: input.isAcknowledged
+      ? optionalText(input.acknowledgementNote, 500) || null
+      : null,
     discordDeliveryEligible: optionalBoolean(
       input,
       "discordDeliveryEligible",
@@ -468,6 +480,7 @@ function migrateLegacySignalEvent(value: unknown): SignalEvent {
   const eligibility = legacyEligibility(input.eligibility);
   const safeEligibility =
     isActionable && eligibility === "unknown" ? "eligible" : eligibility;
+  const legacyAcknowledged = input.isAcknowledged === true;
   const event: SignalEvent = {
     eventId,
     eventVersion: 1,
@@ -499,7 +512,22 @@ function migrateLegacySignalEvent(value: unknown): SignalEvent {
     rawSourceReference:
       optionalText(input.rawSourceReference, 500) || `legacy:${eventId}`,
     isActionable,
-    isAcknowledged: Boolean(input.isAcknowledged),
+    isAcknowledged: legacyAcknowledged,
+    acknowledgedAt: legacyAcknowledged
+      ? (() => {
+          try {
+            return nullableIsoDate(input.acknowledgedAt, "acknowledgedAt");
+          } catch {
+            return null;
+          }
+        })()
+      : null,
+    acknowledgedBy: legacyAcknowledged
+      ? optionalText(input.acknowledgedBy, 200) || null
+      : null,
+    acknowledgementNote: legacyAcknowledged
+      ? optionalText(input.acknowledgementNote, 500) || null
+      : null,
     discordDeliveryEligible:
       isActionable ||
       signalState === "low_liquidity_warning" ||
@@ -666,11 +694,21 @@ export class SignalEventRepository {
     });
   }
 
-  async acknowledge(eventId: string, acknowledged = true) {
+  async acknowledge(
+    eventId: string,
+    acknowledged = true,
+    acknowledgedBy = "authenticated dashboard session",
+    note?: string,
+  ) {
     const file = await this.read();
     const event = file.events.find((item) => item.eventId === eventId);
     if (!event) return null;
     event.isAcknowledged = acknowledged;
+    event.acknowledgedAt = acknowledged ? new Date().toISOString() : null;
+    event.acknowledgedBy = acknowledged ? acknowledgedBy.slice(0, 200) : null;
+    event.acknowledgementNote = acknowledged
+      ? optionalText(note, 500) || null
+      : null;
     event.updatedAt = new Date().toISOString();
     file.isExample = false;
     await this.writeEvents(file);

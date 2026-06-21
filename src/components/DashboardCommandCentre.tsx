@@ -157,12 +157,12 @@ function ActionNeededPanel({ items }: { items: DashboardActionItem[] }) {
               ? `${items.length} recent signal change${
                   items.length === 1 ? "" : "s"
                 } to review`
-              : "No recent signal reversals need manual action"}
+              : "No current signal actions require review."}
           </h1>
           <p>
-            Entry, exit and SMA200 regime changes from the last 7 calendar days.
-            Historical scanner errors are not treated as current actions when
-            the scanner is healthy.
+            Current, unacknowledged entry, exit, SMA200 regime and scanner-error
+            actions from the latest review window. Historical scanner errors are
+            not treated as current actions when the scanner is healthy.
           </p>
         </div>
         <Badge tone={items.length ? "amber" : "green"}>{items.length}</Badge>
@@ -206,8 +206,8 @@ function ActionNeededPanel({ items }: { items: DashboardActionItem[] }) {
           <div>
             <strong>No manual action flagged</strong>
             <p>
-              No entry, exit, risk-on or risk-off event was generated in the
-              last 7 calendar days.
+              No current, unacknowledged entry, exit, risk-on, risk-off or
+              scanner-error alert requires review.
             </p>
           </div>
         </div>

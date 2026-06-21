@@ -1508,9 +1508,14 @@ protectedApi.put(
   "/signal-events/:eventId/acknowledge",
   requireCsrf(sessionSecret),
   safeMutation(async (request, response) => {
+    const session = response.locals.session as
+      | ReturnType<typeof readSession>
+      | undefined;
     const event = await signalEventRepository.acknowledge(
       String(request.params.eventId),
       request.body?.acknowledged !== false,
+      session?.session.username ?? "authenticated dashboard session",
+      stringValue(request.body?.note, "note", false),
     );
     if (!event) {
       response.status(404).json({ error: "Signal event not found." });

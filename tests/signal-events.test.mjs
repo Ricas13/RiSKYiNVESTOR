@@ -170,8 +170,21 @@ test("canonical events remain explicit, deduplicated, and auditable", async () =
       /occurredAt/,
     );
 
-    const acknowledged = await repo.events.acknowledge("evt-entry");
+    const acknowledged = await repo.events.acknowledge(
+      "evt-entry",
+      true,
+      "ricardo",
+      "Reviewed on dashboard.",
+    );
     assert.equal(acknowledged.isAcknowledged, true);
+    assert.equal(acknowledged.acknowledgedBy, "ricardo");
+    assert.match(acknowledged.acknowledgedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(acknowledged.acknowledgementNote, "Reviewed on dashboard.");
+    const persisted = (await repo.events.read()).events.find(
+      (event) => event.eventId === "evt-entry",
+    );
+    assert.equal(persisted.isAcknowledged, true);
+    assert.equal(persisted.acknowledgedBy, "ricardo");
     const delivery = await repo.deliveries.recordDashboardSent(
       "evt-entry",
       entry.reasonText,

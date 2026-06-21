@@ -2991,6 +2991,10 @@ pre {
   color: var(--text-muted);
 }
 
+.event-row__status-note {
+  color: var(--amber) !important;
+}
+
 .event-acknowledge {
   align-items: center;
   background: rgba(80, 200, 151, 0.08);
@@ -3009,6 +3013,35 @@ pre {
 
 .event-acknowledge:hover {
   background: rgba(80, 200, 151, 0.14);
+}
+
+.event-acknowledge:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.alert-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.alert-filter-tabs button {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 750;
+  padding: 0.46rem 0.75rem;
+}
+
+.alert-filter-tabs button.is-active {
+  background: var(--green-soft);
+  border-color: rgba(80, 200, 151, 0.34);
+  color: var(--green);
 }
 
 .event-row__facts {
