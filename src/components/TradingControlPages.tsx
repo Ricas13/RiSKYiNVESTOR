@@ -18,6 +18,7 @@ import { PerformanceCards } from "./PerformanceCards";
 import { PerformanceCharts } from "./PerformanceCharts";
 import { RiskExposureDashboard } from "./RiskExposureDashboard";
 import { ScenarioSimulator } from "./ScenarioSimulator";
+import { ScannerSignalMonitor } from "./ScannerSignalMonitor";
 import {
   NotificationHistory,
   SignalEventList,
@@ -346,8 +347,14 @@ function SignalsPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) 
     <div className="control-page-stack">
       <PageHeading
         eyebrow="Signal Monitor"
-        title="Current strategy signal stream"
-        copy="Review SuperTrend and SMA200 signal changes, weekly reversals and the exact reason each event was recorded."
+        title="Ticker-pair signal control table"
+        copy="Review current SuperTrend ticker-pair status, weekly reversals, open virtual positions and scanner freshness from the latest scanner snapshot."
+      />
+      <ScannerSignalMonitor monitor={data.strategyMonitor} />
+      <SectionHeader
+        eyebrow="Recent signal events"
+        title="Event stream"
+        copy="Canonical scanner events remain available below the ticker-pair table for audit and acknowledgement."
       />
       <SignalEventList
         events={data.signalEvents.events}
