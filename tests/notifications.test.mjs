@@ -744,4 +744,4 @@ test("Discord embed templates are compact, color-routed and contain no plaintext
     assert.equal(validateDiscordPayload(payload), payload);
     assert.ok(JSON.stringify(payload).length < 20_000);
   }
-}
+});
