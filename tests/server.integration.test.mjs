@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { scryptSync } from "node:crypto";
 import { once } from "node:events";
 import {
+  mkdir,
   mkdtemp,
   readdir,
   readFile,
@@ -327,6 +328,236 @@ test("private API enforces auth and CSRF across the manual trade lifecycle", asy
       ).includes("multi_strategy_v1.json"),
       false,
     );
+
+    const scannerOutputDir = path.join(privateData, "scanner-output");
+    await mkdir(scannerOutputDir, { recursive: true });
+    const largeEvents = Array.from({ length: 10_050 }, (_, index) => ({
+      eventId: `large-sma-event-${index}`,
+      strategyId: "nasdaq-sma200-3x",
+      eventType: index === 10_049 ? "entry" : "stateUpdate",
+      occurredAt: new Date(Date.UTC(2020, 0, 1, 0, index)).toISOString(),
+      signalTicker: "QQQ",
+      executionTicker: "QQQ3.L",
+      reason: `Large scanner history event ${index}.`,
+    }));
+    const largeClosedTrades = Array.from({ length: 2_000 }, (_, index) => ({
+      positionId: `closed-large-${index}`,
+      executionTicker: "QQQ3.L",
+      entryTimestamp: new Date(Date.UTC(2025, 0, 1, 0, index)).toISOString(),
+      exitTimestamp: new Date(Date.UTC(2025, 5, 1, 0, index)).toISOString(),
+      entryPrice: 100,
+      exitPrice: 101,
+      pnlValue: index,
+      pnlPercent: index / 10,
+      exitReason: `Closed historical model trade ${index}.`,
+      diagnosticPayload: "x".repeat(250),
+    }));
+    const largeEquitySnapshots = Array.from({ length: 2_000 }, (_, index) => ({
+      date: new Date(Date.UTC(2021, 0, 1 + index)).toISOString().slice(0, 10),
+      value: 10_000 + index,
+    }));
+    const largeWarnings = Array.from({ length: 80 }, (_, index) => ({
+      severity: "warning",
+      code: `large_warning_${index}`,
+      message:
+        "Performance warning: this model result may be distorted by leveraged ETP price history or currency units.",
+      affectedTickers: ["QQQ3.L"],
+    }));
+    const largeSnapshot = {
+      schemaVersion: "multi_strategy_v1",
+      generatedAt: "2026-06-21T12:00:00.000Z",
+      scanner: {
+        name: "RiSKYiNVESTOR integrated scanner",
+        version: "1.0.0",
+        status: "current",
+        errors: [],
+        warnings: largeWarnings,
+        dataFreshness: {
+          generatedAt: "2026-06-21T00:00:00.000Z",
+          staleAfterMinutes: 5760,
+        },
+      },
+      strategies: [
+        {
+          strategyId: "daily-supertrend",
+          name: "Daily SuperTrend",
+          enabled: true,
+          configured: true,
+          status: "current",
+          ruleSummary: "Daily SuperTrend virtual model.",
+          parameters: {
+            watchlist: [
+              {
+                signalTicker: "ARM",
+                executionTicker: "3ARM.L",
+                enabled: true,
+              },
+            ],
+          },
+          currentState: "in_market",
+          modelValue: 10_500,
+          returnPercent: 5,
+          drawdownPercent: -2,
+          exposurePercent: 50,
+          equitySnapshots: largeEquitySnapshots,
+          virtualPositions: [
+            {
+              positionId: "daily-supertrend:arm",
+              label: "Virtual model position",
+              signalTicker: "ARM",
+              executionTicker: "3ARM.L",
+              state: "in",
+              entryTimestamp: "2026-06-20T09:00:00.000Z",
+              entryPrice: 100,
+              latestPrice: 105,
+              quantity: 10,
+              allocation: 1000,
+              openPnlValue: 50,
+              openPnlPercent: 5,
+              daysHeld: 1,
+              latestSignal: "entry",
+              reason: "Current model position.",
+            },
+          ],
+          closedVirtualTrades: largeClosedTrades,
+          events: [
+            {
+              eventId: "daily-supertrend-current-entry",
+              strategyId: "daily-supertrend",
+              eventType: "entry",
+              occurredAt: "2026-06-21T09:00:00.000Z",
+              signalTicker: "ARM",
+              executionTicker: "3ARM.L",
+              reason: "Current Daily SuperTrend entry.",
+            },
+          ],
+          latestEvent: {
+            eventId: "daily-supertrend-current-entry",
+            strategyId: "daily-supertrend",
+            eventType: "entry",
+            occurredAt: "2026-06-21T09:00:00.000Z",
+            signalTicker: "ARM",
+            executionTicker: "3ARM.L",
+            reason: "Current Daily SuperTrend entry.",
+          },
+          dataFreshness: "2026-06-21T00:00:00.000Z",
+        },
+        {
+          strategyId: "nasdaq-sma200-3x",
+          name: "Nasdaq SMA200 Regime — 3x",
+          enabled: true,
+          configured: true,
+          status: "current",
+          ruleSummary: "Nasdaq SMA200 virtual model.",
+          parameters: {
+            watchlist: [
+              {
+                signalTicker: "QQQ",
+                executionTicker: "QQQ3.L",
+                enabled: true,
+              },
+            ],
+          },
+          currentState: "risk_on",
+          modelValue: 11_000,
+          returnPercent: 10,
+          drawdownPercent: -3,
+          exposurePercent: 100,
+          cash: 0,
+          investedValue: 11_000,
+          regimeStartDate: "2026-06-21T00:00:00.000Z",
+          referenceTicker: "QQQ",
+          executionTicker: "QQQ3.L",
+          equitySnapshots: largeEquitySnapshots,
+          virtualPositions: [
+            {
+              positionId: "nasdaq-sma200-3x:qqq",
+              label: "Virtual model position",
+              signalTicker: "QQQ",
+              executionTicker: "QQQ3.L",
+              state: "risk_on",
+              entryTimestamp: "2026-06-21T09:00:00.000Z",
+              entryPrice: 100,
+              latestPrice: 110,
+              quantity: 10,
+              allocation: 1000,
+              openPnlValue: 100,
+              openPnlPercent: 10,
+              daysHeld: 1,
+              latestSignal: "entry",
+              reason: "Current SMA200 risk-on position.",
+            },
+          ],
+          closedVirtualTrades: largeClosedTrades,
+          events: largeEvents,
+          regimeChangeEvents: largeEvents,
+          latestEvent: largeEvents.at(-1),
+          dataFreshness: "2026-06-21T00:00:00.000Z",
+          warnings: largeWarnings,
+        },
+      ],
+    };
+    const rawScannerOutput = JSON.stringify(largeSnapshot);
+    assert.ok(rawScannerOutput.length > 1_500_000);
+    await writeFile(
+      path.join(scannerOutputDir, "multi_strategy_v1.json"),
+      rawScannerOutput,
+      "utf8",
+    );
+    response = await fetch(`${baseUrl}/api/scanner/refresh`, {
+      method: "POST",
+      headers: {
+        ...authenticatedHeaders,
+        "content-type": "application/json",
+        "x-csrf-token": session.csrfToken,
+      },
+    });
+    assert.equal(response.status, 200);
+    const refreshText = await response.text();
+    assert.ok(refreshText.length < rawScannerOutput.length / 2);
+    const refreshedMonitor = JSON.parse(refreshText);
+    assert.equal(refreshedMonitor.snapshot.strategies[1].events.length, 250);
+    assert.equal(
+      refreshedMonitor.snapshot.strategies[1].closedVirtualTrades.length,
+      100,
+    );
+    assert.equal(
+      refreshedMonitor.snapshot.strategies[1].equitySnapshots.length,
+      500,
+    );
+    assert.equal(refreshedMonitor.snapshot.scanner.warnings.length, 50);
+
+    response = await fetch(`${baseUrl}/api/dashboard`, {
+      headers: authenticatedHeaders,
+    });
+    assert.equal(response.status, 200);
+    const largeDashboardText = await response.text();
+    assert.ok(largeDashboardText.length < rawScannerOutput.length / 2);
+    const largeDashboard = JSON.parse(largeDashboardText);
+    assert.equal(
+      largeDashboard.strategyMonitor.snapshot.strategies[1].events.length,
+      250,
+    );
+    assert.equal(
+      largeDashboard.strategyMonitor.snapshot.strategies[1].closedVirtualTrades
+        .length,
+      100,
+    );
+    assert.equal(
+      largeDashboard.strategyMonitor.snapshot.strategies[1].equitySnapshots
+        .length,
+      500,
+    );
+    assert.equal(
+      largeDashboard.strategyMonitor.snapshot.strategies[1].warnings.length,
+      50,
+    );
+    assert.ok(
+      largeDashboard.signalEvents.events.some(
+        (event) => event.eventId === "daily-supertrend-current-entry",
+      ),
+    );
+
 
     const strategyConfiguration = structuredClone(
       initialDashboard.strategyConfiguration,

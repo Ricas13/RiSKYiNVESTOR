@@ -1119,7 +1119,11 @@ protectedApi.post(
   requireOwner,
   requireCsrf(sessionSecret),
   safeMutation(async (_request, response) => {
-    response.json(await multiStrategyService.refresh(true));
+    response.json(
+      trimMultiStrategyPublicState(await multiStrategyService.refresh(true), {
+        eventsPerStrategy: dashboardStrategyEventsPerStrategy,
+      }),
+    );
   }),
 );
 
