@@ -8,7 +8,7 @@ import time
 
 from .config import ConfigurationError, load_config
 from .engine import ScannerEngine
-from .market_data import CsvMarketDataProvider
+from .market_data import build_market_data_provider
 from .storage import atomic_write_json
 
 
@@ -60,12 +60,7 @@ def run_once(rebuild_history: bool = False) -> int:
         )
         return 0
 
-    provider = CsvMarketDataProvider(
-        url_template=str(config.provider["urlTemplate"]),
-        timeout_seconds=int(config.provider["timeoutSeconds"]),
-        maximum_retries=int(config.provider["maximumRetries"]),
-        cache_dir=state_dir / "market_cache",
-    )
+    provider = build_market_data_provider(config.provider, state_dir / "market_cache")
     ScannerEngine(config, provider, state_dir, output_dir).scan(
         rebuild_history=rebuild_history
     )
