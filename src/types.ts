@@ -242,8 +242,13 @@ export interface StrategyConfiguration {
     dailySuperTrend: {
       enabled: boolean;
       timeframe: string;
+      referenceTimeframe: string;
+      atrLength: number;
       atrPeriod: number;
       multiplier: number;
+      smoothing: "RMA";
+      switchStoploss: boolean;
+      useConfirmed: boolean;
       modelStartingCapital: number;
       allocationPolicy: "equal_weight" | "weighted";
       maximumConcurrentPositions: number;

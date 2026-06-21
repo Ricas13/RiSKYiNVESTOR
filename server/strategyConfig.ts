@@ -55,8 +55,13 @@ export interface StrategyConfiguration {
     dailySuperTrend: {
       enabled: boolean;
       timeframe: string;
+      referenceTimeframe: string;
+      atrLength: number;
       atrPeriod: number;
       multiplier: number;
+      smoothing: "RMA";
+      switchStoploss: boolean;
+      useConfirmed: boolean;
       modelStartingCapital: number;
       allocationPolicy: "equal_weight" | "weighted";
       maximumConcurrentPositions: number;
@@ -104,8 +109,13 @@ export const defaultStrategyConfiguration: StrategyConfiguration = {
     dailySuperTrend: {
       enabled: false,
       timeframe: "1d",
-      atrPeriod: 10,
+      referenceTimeframe: "D",
+      atrLength: 20,
+      atrPeriod: 20,
       multiplier: 3,
+      smoothing: "RMA",
+      switchStoploss: false,
+      useConfirmed: true,
       modelStartingCapital: 10_000,
       allocationPolicy: "equal_weight",
       maximumConcurrentPositions: 5,
@@ -282,6 +292,32 @@ export function validateStrategyConfiguration(
   if (!["equal_weight", "weighted"].includes(allocationPolicy)) {
     throw new Error("Allocation policy must be equal_weight or weighted.");
   }
+  const superTrendAtrLength = Math.round(
+    numberValue(
+      superTrend.atrLength ?? superTrend.atrPeriod ?? 20,
+      "ATR length",
+      2,
+      500,
+    ),
+  );
+  const superTrendSmoothing = textValue(
+    superTrend.smoothing ?? "RMA",
+    "SuperTrend smoothing",
+  ).toUpperCase();
+  if (superTrendSmoothing !== "RMA") {
+    throw new Error(
+      "SuperTrend smoothing must be RMA for TradingView parity.",
+    );
+  }
+  const referenceTimeframe = textValue(
+    superTrend.referenceTimeframe ?? "D",
+    "SuperTrend reference timeframe",
+  ).toUpperCase();
+  if (referenceTimeframe !== "D") {
+    throw new Error(
+      "SuperTrend reference timeframe must be D for TradingView parity.",
+    );
+  }
 
   const sma = objectValue(
     strategies.nasdaqSma200,
@@ -372,15 +408,18 @@ export function validateStrategyConfiguration(
           superTrend.timeframe ?? "1d",
           "SuperTrend timeframe",
         ),
-        atrPeriod: Math.round(
-          numberValue(superTrend.atrPeriod, "ATR period", 2, 500),
-        ),
+        referenceTimeframe,
+        atrLength: superTrendAtrLength,
+        atrPeriod: superTrendAtrLength,
         multiplier: numberValue(
-          superTrend.multiplier,
+          superTrend.multiplier ?? 3,
           "SuperTrend multiplier",
           0.1,
           20,
         ),
+        smoothing: "RMA",
+        switchStoploss: superTrend.switchStoploss === true,
+        useConfirmed: superTrend.useConfirmed !== false,
         modelStartingCapital: numberValue(
           superTrend.modelStartingCapital,
           "SuperTrend model starting capital",
@@ -588,8 +627,13 @@ export const strategyConfigurationPresets: StrategyConfigurationPreset[] = [
       configuration.strategies.dailySuperTrend = {
         enabled: false,
         timeframe: "1d",
-        atrPeriod: 10,
+        referenceTimeframe: "D",
+        atrLength: 20,
+        atrPeriod: 20,
         multiplier: 3,
+        smoothing: "RMA",
+        switchStoploss: false,
+        useConfirmed: true,
         modelStartingCapital: 10_000,
         allocationPolicy: "equal_weight",
         maximumConcurrentPositions: 5,

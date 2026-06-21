@@ -364,7 +364,12 @@ export function StrategyConfiguration({
         <div className="strategy-config__header">
           <div>
             <h3>Daily SuperTrend</h3>
-            <p>Ticker-pair setup for the virtual SuperTrend model.</p>
+            <p>
+              Ticker-pair setup for the virtual SuperTrend model.
+              SuperTrend uses TradingView-compatible
+              AdaptiveSuperTrendSignals logic. Minor date differences can
+              occur if market data differs from TradingView.
+            </p>
           </div>
           <label className="toggle-row">
             <span>Enable strategy</span>
@@ -385,19 +390,59 @@ export function StrategyConfiguration({
             value={superTrend.timeframe}
             onChange={(timeframe) => updateSuperTrend({ timeframe })}
           />
-          <NumberField
-            label="ATR period"
-            value={superTrend.atrPeriod}
-            min={2}
-            onChange={(atrPeriod) => updateSuperTrend({ atrPeriod })}
+          <TextField
+            label="Reference timeframe"
+            value={superTrend.referenceTimeframe ?? "D"}
+            onChange={(referenceTimeframe) =>
+              updateSuperTrend({ referenceTimeframe })
+            }
           />
           <NumberField
-            label="Multiplier"
+            label="ATR length"
+            value={superTrend.atrLength ?? superTrend.atrPeriod ?? 20}
+            min={2}
+            onChange={(atrLength) =>
+              updateSuperTrend({ atrLength, atrPeriod: atrLength })
+            }
+          />
+          <label className="field">
+            <span>ATR smoothing</span>
+            <select
+              value={superTrend.smoothing ?? "RMA"}
+              onChange={() => updateSuperTrend({ smoothing: "RMA" })}
+            >
+              <option value="RMA">RMA</option>
+            </select>
+          </label>
+          <NumberField
+            label="Legacy multiplier"
             value={superTrend.multiplier}
             min={0.1}
             step={0.1}
             onChange={(multiplier) => updateSuperTrend({ multiplier })}
           />
+          <label className="toggle-row">
+            <span>Stop-loss factor mode</span>
+            <input
+              type="checkbox"
+              checked={superTrend.switchStoploss ?? false}
+              onChange={(event) =>
+                updateSuperTrend({ switchStoploss: event.target.checked })
+              }
+            />
+            <i aria-hidden="true" />
+          </label>
+          <label className="toggle-row">
+            <span>Use confirmed daily candles</span>
+            <input
+              type="checkbox"
+              checked={superTrend.useConfirmed ?? true}
+              onChange={(event) =>
+                updateSuperTrend({ useConfirmed: event.target.checked })
+              }
+            />
+            <i aria-hidden="true" />
+          </label>
           <NumberField
             label="Model starting capital"
             value={superTrend.modelStartingCapital}
