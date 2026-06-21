@@ -403,6 +403,7 @@ test("SMA200 summary renders", () => {
 test("actual trade equity chart renders when manual trade data exists", () => {
   const html = render(dashboard());
 
+  assert.match(html, /Actual trading progress/);
   assert.match(html, /Actual trade equity/);
   assert.match(html, /Actual trade equity chart/);
   assert.match(html, /Based only on trades you manually recorded/);
@@ -419,6 +420,7 @@ test("actual trade equity empty state renders when no manual trades exist", () =
     } as Partial<DashboardData>),
   );
 
+  assert.match(html, /Actual trading progress/);
   assert.match(html, /No manual trades recorded yet/);
   assert.match(
     html,

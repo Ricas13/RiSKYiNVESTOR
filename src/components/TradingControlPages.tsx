@@ -1,7 +1,6 @@
-import { Activity, Landmark } from "lucide-react";
+import { Landmark } from "lucide-react";
 import type { AuthSession, DashboardData } from "../types";
 import { ActualSummaryCards } from "./ActualSummaryCards";
-import { BacktestResults } from "./BacktestResults";
 import { ClosedTradesTable } from "./ClosedTradesTable";
 import { DashboardCommandCentre } from "./DashboardCommandCentre";
 import { DrawdownPainTracker } from "./DrawdownPainTracker";
@@ -10,7 +9,6 @@ import { OpenPositionsTable } from "./OpenPositionsTable";
 import { PerformanceCards } from "./PerformanceCards";
 import { PerformanceCharts } from "./PerformanceCharts";
 import { RiskExposureDashboard } from "./RiskExposureDashboard";
-import { ScenarioSimulator } from "./ScenarioSimulator";
 import { ScannerSignalMonitor } from "./ScannerSignalMonitor";
 import { NotificationHistory, SignalEventList } from "./SignalEvents";
 import { SignalComparison } from "./SignalComparison";
@@ -88,7 +86,7 @@ export function TradingControlPage({
 
 function ControlDashboard({ data }: { data: DashboardData }) {
   return (
-    <div className="control-page-stack dashboard-page-stack">
+    <div className="control-page-stack control-room-page dashboard-page-stack">
       <PageHeading
         eyebrow="Dashboard"
         title="Signal control room"
@@ -129,7 +127,7 @@ function SignalsPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) 
   }));
 
   return (
-    <div className="control-page-stack">
+    <div className="control-page-stack control-room-page signal-monitor-page">
       <PageHeading
         eyebrow="Signal Monitor"
         title="Ticker-pair signal control table"
@@ -229,52 +227,45 @@ function PortfolioPage({ data, mutate }: { data: DashboardData; mutate: Mutate }
 }
 
 function PerformancePage({ data }: { data: DashboardData }) {
-  const latest = [...data.wealthSnapshots.snapshots].sort((a, b) =>
-    b.date.localeCompare(a.date),
-  )[0];
-  const hasPerformance =
+  const hasLegacyActualPerformance =
     data.performance.closedTrades > 0 ||
     data.performance.realisedSeries.length > 0 ||
     data.openTrades.length > 0 ||
-    data.closedTrades.trades.length > 0 ||
-    data.config.backtests.baseline.startingCapital > 0;
+    data.closedTrades.trades.length > 0;
   return (
-    <div className="control-page-stack">
+    <div className="control-page-stack control-room-page strategy-performance-page">
       <PageHeading
         eyebrow="Strategy Performance"
         title="Model and actual signal performance"
         copy="Compare SuperTrend and SMA200 model behaviour, actual trade outcomes, equity curves and closed model trades."
       />
-      {!hasPerformance ? (
-        <div className="truthful-empty-state">
-          <Activity size={24} />
+      <section className="model-performance-note">
+        <article>
+          <span>Model performance</span>
+          <p>
+            Model performance is based on scanner virtual trades. It is not
+            broker-synced.
+          </p>
+        </article>
+        <article>
+          <span>Actual trading progress</span>
+          <p>
+            Actual trading progress is based only on trades you manually
+            recorded.
+          </p>
+        </article>
+      </section>
+      <StrategyMonitor monitor={data.strategyMonitor} showHeading={false} />
+      {hasLegacyActualPerformance && (
+        <details className="legacy-performance-details">
+          <summary>Historical actual trade performance records</summary>
           <div>
-            <h2>No model performance data imported</h2>
-            <p>
-              Connect a canonical scanner export before model P/L, positions,
-              charts, scenarios, or backtests are shown.
-            </p>
+            <PerformanceCards performance={data.performance} />
+            <PerformanceCharts performance={data.performance} />
+            <OpenPositionsTable trades={data.openTrades} />
+            <ClosedTradesTable trades={data.closedTrades.trades} />
           </div>
-        </div>
-      ) : (
-        <>
-          <PerformanceCards performance={data.performance} />
-          <PerformanceCharts performance={data.performance} />
-          <OpenPositionsTable trades={data.openTrades} />
-          <ClosedTradesTable trades={data.closedTrades.trades} />
-          <SectionHeader
-            eyebrow="Projection"
-            title="Scenario simulator"
-            copy="Assumption-based future paths; not forecasts or guarantees."
-          />
-          <ScenarioSimulator defaultValue={latest?.totalPortfolioValue ?? 10000} />
-          <SectionHeader
-            eyebrow="Research"
-            title="Backtest archive"
-            copy="Historical model research kept away from the decision-focused dashboard."
-          />
-          <BacktestResults config={data.config} />
-        </>
+        </details>
       )}
     </div>
   );
@@ -288,7 +279,10 @@ function TradeJournalPage({
   mutate: Mutate;
 }) {
   return (
-    <div className="control-page-stack" id="manual-trades">
+    <div
+      className="control-page-stack control-room-page trade-journal-page"
+      id="manual-trades"
+    >
       <PageHeading
         eyebrow="Trade Journal"
         title="Manual trades taken from signals"
@@ -322,7 +316,7 @@ function AlertsPage({
   };
 
   return (
-    <div className="control-page-stack">
+    <div className="control-page-stack control-room-page alerts-page">
       <PageHeading
         eyebrow="Alerts"
         title="Event and delivery history"
