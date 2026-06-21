@@ -3,7 +3,7 @@
   "private": true,
   "version": "2.1.0",
   "type": "module",
-  "packageManager": "pnmp@10.12.1",
+  "packageManager": "pnpm@10.12.1",
   "scripts": {
     "dev": "concurrently -k -n web,server \"vite\" \"tsx watch server/index.ts\"",
     "build": "tsc -b && vite build && tsc -p tsconfig.server.json",
