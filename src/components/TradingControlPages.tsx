@@ -418,6 +418,14 @@ function AlertsPage({
           </button>
         ))}
       </div>
+      {data.signalEvents.pagination && (
+        <p className="alerts-pagination-note">
+          Showing latest {data.signalEvents.pagination.returnedEvents} of{" "}
+          {data.signalEvents.pagination.totalEvents} matching stored events.
+          Full history remains stored; use the signalEventLimit and
+          signalEventOffset query parameters for paged API reads.
+        </p>
+      )}
       <SignalEventList
         events={filteredEvents}
         deliveries={data.notifications.deliveries}

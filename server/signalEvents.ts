@@ -71,6 +71,16 @@ export interface SignalEventFile {
   isExample: boolean;
   notice?: string;
   events: SignalEvent[];
+  pagination?: SignalEventPagination;
+}
+
+export interface SignalEventPagination {
+  limit: number;
+  offset: number;
+  returnedEvents: number;
+  totalEvents: number;
+  totalStoredEvents: number;
+  hasMore: boolean;
 }
 
 export type AlertChannel =
@@ -145,6 +155,12 @@ export interface SignalEventFilters {
   to?: string;
 }
 
+export interface SignalEventPageOptions {
+  filters?: SignalEventFilters;
+  limit?: number;
+  offset?: number;
+}
+
 const signalStates = new Set<SignalState>([
   "actionable_entry",
   "actionable_exit",
@@ -178,6 +194,8 @@ const allocationStatuses = new Set<AllocationStatus>([
   "not_applicable",
   "unknown",
 ]);
+const defaultSignalEventPageLimit = 500;
+const maximumSignalEventPageLimit = 1_000;
 const deliveryChannels = new Set<AlertChannel>([
   "dashboard",
   "discord",
@@ -662,36 +680,32 @@ export class SignalEventRepository {
   async list(filters: SignalEventFilters = {}) {
     const file = await this.read();
     const ticker = filters.ticker?.trim().toUpperCase();
-    return file.events.filter((event) => {
-      if (filters.strategyId && event.strategyId !== filters.strategyId) {
-        return false;
-      }
-      if (
-        ticker &&
-        event.tradeTicker !== ticker &&
-        event.underlyingTicker !== ticker
-      ) {
-        return false;
-      }
-      if (filters.signalState && event.signalState !== filters.signalState) {
-        return false;
-      }
-      if (
-        filters.actionable !== undefined &&
-        event.isActionable !== filters.actionable
-      ) {
-        return false;
-      }
-      if (
-        filters.acknowledged !== undefined &&
-        event.isAcknowledged !== filters.acknowledged
-      ) {
-        return false;
-      }
-      if (filters.from && event.occurredAt < filters.from) return false;
-      if (filters.to && event.occurredAt > filters.to) return false;
-      return true;
-    });
+    return filterSignalEvents(file.events, filters, ticker);
+  }
+
+  async readPage(options: SignalEventPageOptions = {}) {
+    const file = await this.read();
+    const limit = clampPageLimit(options.limit);
+    const offset = clampOffset(options.offset);
+    const ticker = options.filters?.ticker?.trim().toUpperCase();
+    const filtered = filterSignalEvents(
+      file.events,
+      options.filters ?? {},
+      ticker,
+    );
+    const events = filtered.slice(offset, offset + limit);
+    return {
+      ...file,
+      events,
+      pagination: {
+        limit,
+        offset,
+        returnedEvents: events.length,
+        totalEvents: filtered.length,
+        totalStoredEvents: file.events.length,
+        hasMore: offset + events.length < filtered.length,
+      },
+    };
   }
 
   async acknowledge(
@@ -716,7 +730,7 @@ export class SignalEventRepository {
   }
 
   async dashboardItems() {
-    const events = await this.list();
+    const { events } = await this.readPage({ limit: 50 });
     return {
       latestActionable:
         events.find((event) => event.isActionable) ?? null,
@@ -724,6 +738,54 @@ export class SignalEventRepository {
       recent: events.slice(0, 5),
     };
   }
+}
+
+function filterSignalEvents(
+  events: SignalEvent[],
+  filters: SignalEventFilters,
+  ticker?: string,
+) {
+  return events.filter((event) => {
+    if (filters.strategyId && event.strategyId !== filters.strategyId) {
+      return false;
+    }
+    if (
+      ticker &&
+      event.tradeTicker !== ticker &&
+      event.underlyingTicker !== ticker
+    ) {
+      return false;
+    }
+    if (filters.signalState && event.signalState !== filters.signalState) {
+      return false;
+    }
+    if (
+      filters.actionable !== undefined &&
+      event.isActionable !== filters.actionable
+    ) {
+      return false;
+    }
+    if (
+      filters.acknowledged !== undefined &&
+      event.isAcknowledged !== filters.acknowledged
+    ) {
+      return false;
+    }
+    if (filters.from && event.occurredAt < filters.from) return false;
+    if (filters.to && event.occurredAt > filters.to) return false;
+    return true;
+  });
+}
+
+function clampPageLimit(limit: number | undefined) {
+  if (limit === undefined) return defaultSignalEventPageLimit;
+  if (!Number.isFinite(limit)) return defaultSignalEventPageLimit;
+  return Math.max(1, Math.min(maximumSignalEventPageLimit, Math.trunc(limit)));
+}
+
+function clampOffset(offset: number | undefined) {
+  if (offset === undefined || !Number.isFinite(offset)) return 0;
+  return Math.max(0, Math.trunc(offset));
 }
 
 export class AlertDeliveryRepository {

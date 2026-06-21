@@ -485,6 +485,14 @@ export interface SignalEventFile {
   isExample: boolean;
   notice?: string;
   events: SignalEvent[];
+  pagination?: {
+    limit: number;
+    offset: number;
+    returnedEvents: number;
+    totalEvents: number;
+    totalStoredEvents: number;
+    hasMore: boolean;
+  };
 }
 
 export interface NotificationSettings {

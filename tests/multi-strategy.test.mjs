@@ -12,6 +12,8 @@ import path from "node:path";
 import test from "node:test";
 import {
   MultiStrategyService,
+  selectStrategyEventImportCandidates,
+  trimMultiStrategyPublicState,
   validateMultiStrategySnapshot,
 } from "../dist-server/multiStrategy.js";
 import {
@@ -327,6 +329,103 @@ test("invalid current scanner output preserves the last known good model dataset
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("large strategy event history is bounded for import and public control-room state", () => {
+  const value = snapshot();
+  const warning = {
+    severity: "warning",
+    code: "projection_warning",
+    message: "Projection warning retained in bounded public state.",
+    affectedTickers: ["QQQ3.UK"],
+  };
+  value.scanner.errors = Array.from({ length: 50 }, (_, index) => ({
+    message: `Scanner error ${index}`,
+  }));
+  value.scanner.warnings = Array.from({ length: 80 }, (_, index) => ({
+    ...warning,
+    code: `scanner_warning_${index}`,
+  }));
+  const manyEvents = Array.from({ length: 10_050 }, (_, index) => ({
+    eventId: `nasdaq-sma200-3x:history:${index}`,
+    strategyId: "nasdaq-sma200-3x",
+    eventType: index % 2 === 0 ? "entry" : "exit",
+    occurredAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+    signalTicker: "QQQ.US",
+    executionTicker: "QQQ3.UK",
+    reason: `Historical SMA event ${index}.`,
+  }));
+  value.strategies[1].events = manyEvents;
+  value.strategies[1].warnings = Array.from({ length: 80 }, (_, index) => ({
+    ...warning,
+    code: `strategy_warning_${index}`,
+  }));
+  value.strategies[1].virtualPositions[0].warnings = Array.from(
+    { length: 25 },
+    (_, index) => ({ ...warning, code: `position_warning_${index}` }),
+  );
+  value.strategies[1].closedVirtualTrades = Array.from(
+    { length: 2_000 },
+    (_, index) => ({
+      positionId: `closed-${index}`,
+      executionTicker: "QQQ3.UK",
+      exitTimestamp: new Date(Date.UTC(2026, 1, 1, 0, index)).toISOString(),
+      pnlPercent: index,
+      warnings: Array.from({ length: 25 }, (_unused, warningIndex) => ({
+        ...warning,
+        code: `closed_warning_${index}_${warningIndex}`,
+      })),
+    }),
+  );
+  value.strategies[1].equitySnapshots = Array.from(
+    { length: 2_000 },
+    (_, index) => ({
+      date: new Date(Date.UTC(2021, 0, 1 + index)).toISOString().slice(0, 10),
+      value: 10_000 + index,
+    }),
+  );
+  const valid = validateMultiStrategySnapshot(value);
+  const originalEventCount = valid.strategies[1].events.length;
+  const importCandidates = selectStrategyEventImportCandidates(valid, 500);
+  const publicState = trimMultiStrategyPublicState(
+    {
+      source: "current",
+      currentFileValid: true,
+      lastError: null,
+      snapshot: valid,
+    },
+    { eventsPerStrategy: 250 },
+  );
+
+  assert.equal(originalEventCount, 10_050);
+  assert.equal(importCandidates.length, 501);
+  assert.equal(
+    importCandidates.some(
+      (event) => event.eventId === "nasdaq-sma200-3x:history:10049",
+    ),
+    true,
+  );
+  assert.equal(
+    publicState.snapshot.strategies[1].events[0].eventId,
+    "nasdaq-sma200-3x:history:10049",
+  );
+  assert.equal(publicState.snapshot.strategies[1].events.length, 250);
+  assert.equal(publicState.snapshot.strategies[1].closedVirtualTrades.length, 100);
+  assert.equal(publicState.snapshot.strategies[1].equitySnapshots.length, 500);
+  assert.equal(publicState.snapshot.strategies[1].warnings.length, 50);
+  assert.equal(publicState.snapshot.scanner.errors.length, 25);
+  assert.equal(publicState.snapshot.scanner.warnings.length, 50);
+  assert.equal(
+    publicState.snapshot.strategies[1].virtualPositions[0].warnings.length,
+    10,
+  );
+  assert.equal(
+    publicState.snapshot.strategies[1].closedVirtualTrades[0].warnings.length,
+    25,
+  );
+  assert.equal(valid.strategies[1].events.length, 10_050);
+  assert.equal(valid.strategies[1].closedVirtualTrades.length, 2_000);
+  assert.equal(valid.strategies[1].equitySnapshots.length, 2_000);
 });
 
 test("scanner schema enforces strategy isolation and virtual-only positions", () => {

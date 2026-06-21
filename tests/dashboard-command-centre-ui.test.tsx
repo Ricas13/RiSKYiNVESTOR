@@ -11,7 +11,10 @@ import type {
   SignalEvent,
 } from "../src/types";
 import { buildActualTradeEquityModel } from "../src/utils/actualTradeEquity";
-import { buildDashboardCommandCentreModel } from "../src/utils/dashboardCommandCentre";
+import {
+  buildDashboardCommandCentreModel,
+  dashboardSignalEventProcessingLimit,
+} from "../src/utils/dashboardCommandCentre";
 import {
   classifySignalEventAlert,
   filterSignalEventsForAlertFilter,
@@ -447,6 +450,40 @@ test("action-needed section includes recent entry, exit and risk events", () => 
   assert.deepEqual(
     model.actionItems.map((item) => item.eventType),
     ["entry", "exit", "risk_on"],
+  );
+});
+
+test("dashboard model bounds large alert history while preserving current actions", () => {
+  const current = signalEvent({
+    eventId: "current-large-history-entry",
+    occurredAt: "2026-06-21T09:00:00.000Z",
+    reasonText: "Current event survives large history cap.",
+  });
+  const oldEvents = Array.from({ length: 10_000 }, (_, index) =>
+    signalEvent({
+      eventId: `old-history-${index}`,
+      occurredAt: `2026-05-${String((index % 28) + 1).padStart(2, "0")}T09:00:00.000Z`,
+      reasonText: `Old replay event ${index}`,
+    }),
+  );
+  const model = buildDashboardCommandCentreModel(
+    dashboard(snapshot(), {
+      signalEvents: {
+        version: 2,
+        isExample: false,
+        events: [current, ...oldEvents],
+      },
+    } as Partial<DashboardData>),
+  );
+
+  assert.equal(model.actionItems.length, 1);
+  assert.equal(model.actionItems[0].key, "current-large-history-entry");
+  assert.ok(model.recentHistoryEvents.length <= dashboardSignalEventProcessingLimit);
+  assert.equal(
+    model.recentHistoryEvents.some(
+      (event) => event.eventId === "old-history-9999",
+    ),
+    false,
   );
 });
 

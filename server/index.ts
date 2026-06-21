@@ -23,6 +23,7 @@ import {
 } from "./dataStatus.js";
 import {
   MultiStrategyService,
+  trimMultiStrategyPublicState,
   type MultiStrategyEvent,
 } from "./multiStrategy.js";
 import {
@@ -182,6 +183,8 @@ const dataRoot = path.resolve(
 const store = new JsonStore(dataRoot);
 const app = express();
 const port = Number(process.env.PORT ?? 4180);
+const dashboardSignalEventLimit = 500;
+const dashboardStrategyEventsPerStrategy = 250;
 
 function secretValue(name: string) {
   const filePath = process.env[`${name}_FILE`];
@@ -333,19 +336,18 @@ function canonicalStrategyEvent(event: MultiStrategyEvent) {
 }
 const multiStrategyService = new MultiStrategyService(store, {
   onEvents: async (events) => {
-    for (const event of events) {
-      const result = await signalEventRepository.saveCanonical([
-        canonicalStrategyEvent(event),
-      ]);
-      for (const accepted of result.accepted) {
-        await alertDeliveryRepository.recordDashboardSent(
-          accepted.eventId,
-          accepted.reasonText,
-        );
-        await notificationDispatcher
-          .dispatchSignal(accepted)
-          .catch(() => undefined);
-      }
+    if (!events.length) return;
+    const result = await signalEventRepository.saveCanonical(
+      events.map(canonicalStrategyEvent),
+    );
+    for (const accepted of result.accepted) {
+      await alertDeliveryRepository.recordDashboardSent(
+        accepted.eventId,
+        accepted.reasonText,
+      );
+      await notificationDispatcher
+        .dispatchSignal(accepted)
+        .catch(() => undefined);
     }
   },
 });
@@ -371,7 +373,7 @@ async function buildNotificationContext(): Promise<DailySummaryContext> {
   const [snapshot, signalEvents, scannerState, watchlist] =
     await Promise.all([
     dailyPortfolioSnapshotRepository.latest(),
-    signalEventRepository.read(),
+    signalEventRepository.readPage({ limit: dashboardSignalEventLimit }),
     scannerImportService.readState(),
     store.read<Array<{
       tradeTicker?: string;
@@ -436,6 +438,19 @@ function stringValue(value: unknown, field: string, required = true) {
 
 function booleanValue(value: unknown) {
   return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function numberQuery(
+  value: unknown,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const result =
+    typeof raw === "string" && raw.trim() ? Number(raw) : fallback;
+  if (!Number.isFinite(result)) return fallback;
+  return Math.max(minimum, Math.min(maximum, Math.trunc(result)));
 }
 
 function tradeSleeve(
@@ -591,7 +606,7 @@ async function buildDailyPLReport(): Promise<DailyPLReport> {
         realisedModelPL: number;
         realisedSeries: Array<{ date: string; value: number }>;
       }>("model/performance.json"),
-      signalEventRepository.read(),
+      signalEventRepository.readPage({ limit: dashboardSignalEventLimit }),
       dailyPortfolioSnapshotRepository.latest(),
     ]);
   const snapshots = [...snapshotsFile.snapshots].sort((a, b) =>
@@ -810,7 +825,7 @@ app.post(
 const protectedApi = express.Router();
 protectedApi.use(requireSession(sessionSecret));
 
-protectedApi.get("/dashboard", async (_request, response) => {
+protectedApi.get("/dashboard", async (request, response) => {
   const [scannerImport, strategyMonitor, strategyConfiguration] =
     await Promise.all([
       scannerImportService.refreshIfDue(),
@@ -856,7 +871,15 @@ protectedApi.get("/dashboard", async (_request, response) => {
     store.read("model/signals_archive.json"),
     store.read("signal_decisions.json"),
     store.read("alerts.json"),
-    signalEventRepository.read(),
+    signalEventRepository.readPage({
+      limit: numberQuery(
+        request.query.signalEventLimit,
+        dashboardSignalEventLimit,
+        1,
+        1_000,
+      ),
+      offset: numberQuery(request.query.signalEventOffset, 0, 0, 1_000_000),
+    }),
     notificationDispatcher.publicState(),
     buildDailyPLReport(),
     dailyPortfolioSnapshotRepository.latest(),
@@ -889,7 +912,9 @@ protectedApi.get("/dashboard", async (_request, response) => {
     dailyPL,
     latestPortfolioSnapshot,
     scannerImport: scannerImportService.toPublicState(scannerImport),
-    strategyMonitor,
+    strategyMonitor: trimMultiStrategyPublicState(strategyMonitor, {
+      eventsPerStrategy: dashboardStrategyEventsPerStrategy,
+    }),
     strategyConfiguration,
     dataStatus,
   });
@@ -1094,7 +1119,11 @@ protectedApi.post(
   requireOwner,
   requireCsrf(sessionSecret),
   safeMutation(async (_request, response) => {
-    response.json(await multiStrategyService.refresh(true));
+    response.json(
+      trimMultiStrategyPublicState(await multiStrategyService.refresh(true), {
+        eventsPerStrategy: dashboardStrategyEventsPerStrategy,
+      }),
+    );
   }),
 );
 

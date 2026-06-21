@@ -104,6 +104,15 @@ export interface MultiStrategyPublicState {
   snapshot: MultiStrategySnapshot | null;
 }
 
+export const defaultStrategyEventImportLimit = 500;
+export const defaultPublicStrategyEventLimit = 250;
+export const defaultPublicScannerWarningLimit = 50;
+export const defaultPublicStrategyWarningLimit = 50;
+export const defaultPublicPositionWarningLimit = 10;
+export const defaultPublicClosedTradeLimit = 100;
+export const defaultPublicEquitySnapshotLimit = 500;
+export const defaultPublicScannerErrorLimit = 25;
+
 function objectValue(value: unknown, label: string) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object.`);
@@ -391,6 +400,164 @@ export function validateMultiStrategySnapshot(
   };
 }
 
+export function selectStrategyEventImportCandidates(
+  snapshot: MultiStrategySnapshot,
+  limit = defaultStrategyEventImportLimit,
+) {
+  return snapshot.strategies
+    .flatMap((strategy) =>
+      [...strategy.events]
+        .sort((left, right) => {
+          const byPriority =
+            eventImportPriority(left) - eventImportPriority(right);
+          return byPriority || right.occurredAt.localeCompare(left.occurredAt);
+        })
+        .slice(0, clampLimit(limit, defaultStrategyEventImportLimit)),
+    )
+    .sort((left, right) => {
+      const byPriority = eventImportPriority(left) - eventImportPriority(right);
+      return byPriority || right.occurredAt.localeCompare(left.occurredAt);
+    });
+}
+
+export function trimMultiStrategyPublicState(
+  state: MultiStrategyPublicState,
+  options: {
+    eventsPerStrategy?: number;
+    scannerWarnings?: number;
+    scannerErrors?: number;
+    strategyWarnings?: number;
+    positionWarnings?: number;
+    closedVirtualTrades?: number;
+    equitySnapshots?: number;
+  } = {},
+): MultiStrategyPublicState {
+  if (!state.snapshot) return state;
+  const eventsPerStrategy = clampLimit(
+    options.eventsPerStrategy,
+    defaultPublicStrategyEventLimit,
+  );
+  const scannerWarnings = clampLimit(
+    options.scannerWarnings,
+    defaultPublicScannerWarningLimit,
+  );
+  const scannerErrors = clampLimit(
+    options.scannerErrors,
+    defaultPublicScannerErrorLimit,
+  );
+  const strategyWarnings = clampLimit(
+    options.strategyWarnings,
+    defaultPublicStrategyWarningLimit,
+  );
+  const positionWarnings = clampLimit(
+    options.positionWarnings,
+    defaultPublicPositionWarningLimit,
+  );
+  const closedVirtualTrades = clampLimit(
+    options.closedVirtualTrades,
+    defaultPublicClosedTradeLimit,
+  );
+  const equitySnapshots = clampLimit(
+    options.equitySnapshots,
+    defaultPublicEquitySnapshotLimit,
+  );
+  return {
+    ...state,
+    snapshot: {
+      ...state.snapshot,
+      scanner: {
+        ...state.snapshot.scanner,
+        errors: state.snapshot.scanner.errors.slice(0, scannerErrors),
+        warnings: state.snapshot.scanner.warnings?.slice(0, scannerWarnings),
+      },
+      strategies: state.snapshot.strategies.map((strategy) => ({
+        ...strategy,
+        equitySnapshots: latestEquitySnapshots(
+          strategy.equitySnapshots,
+          equitySnapshots,
+        ),
+        virtualPositions: strategy.virtualPositions.map((position) => ({
+          ...position,
+          warnings: position.warnings?.slice(0, positionWarnings),
+        })),
+        closedVirtualTrades: latestClosedVirtualTrades(
+          strategy.closedVirtualTrades,
+          closedVirtualTrades,
+          strategyWarnings,
+        ),
+        events: latestStrategyEvents(strategy.events, eventsPerStrategy),
+        regimeChangeEvents: strategy.regimeChangeEvents
+          ? latestStrategyEvents(strategy.regimeChangeEvents, eventsPerStrategy)
+          : undefined,
+        warnings: strategy.warnings?.slice(0, strategyWarnings),
+      })),
+    },
+  };
+}
+
+function latestStrategyEvents(events: MultiStrategyEvent[], limit: number) {
+  if (events.length <= limit) return events;
+  return [...events]
+    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+    .slice(0, limit);
+}
+
+function latestEquitySnapshots(
+  snapshots: Array<{ date: string; value: number }>,
+  limit: number,
+) {
+  return snapshots.length <= limit ? snapshots : snapshots.slice(-limit);
+}
+
+function latestClosedVirtualTrades(
+  trades: Array<Record<string, unknown>>,
+  limit: number,
+  warningLimit: number,
+) {
+  const visible =
+    trades.length <= limit
+      ? trades
+      : [...trades]
+          .sort((left, right) =>
+            recordTimestamp(right).localeCompare(recordTimestamp(left)),
+          )
+          .slice(0, limit);
+  return visible.map((trade) => {
+    if (!Array.isArray(trade.warnings)) return trade;
+    return {
+      ...trade,
+      warnings: trade.warnings.slice(0, warningLimit),
+    };
+  });
+}
+
+function recordTimestamp(record: Record<string, unknown>) {
+  for (const key of [
+    "exitTimestamp",
+    "closedAt",
+    "exitDate",
+    "updatedAt",
+    "entryTimestamp",
+    "createdAt",
+  ]) {
+    if (typeof record[key] === "string") return record[key];
+  }
+  return "";
+}
+
+function clampLimit(value: number | undefined, fallback: number) {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.trunc(value));
+}
+
+function eventImportPriority(event: MultiStrategyEvent) {
+  return ["entry", "exit", "scannerError", "lowLiquidity"].includes(
+    event.eventType,
+  )
+    ? 0
+    : 1;
+}
+
 async function readOptionalJson(filePath: string) {
   try {
     return JSON.parse(await readFile(filePath, "utf8")) as unknown;
@@ -459,7 +626,7 @@ export class MultiStrategyService {
       let eventImportError: string | null = null;
       try {
         await this.onEvents?.(
-          snapshot.strategies.flatMap((strategy) => strategy.events),
+          selectStrategyEventImportCandidates(snapshot),
         );
       } catch {
         eventImportError =
