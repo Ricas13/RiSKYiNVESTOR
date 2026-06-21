@@ -38,6 +38,20 @@ function strategy(
       : {
           referenceTicker: "QQQ",
           riskOnTicker: "QQQ3.L",
+          watchlist: [
+            {
+              signalTicker: "QQQ",
+              executionTicker: "QQQ3.L",
+              enabled: true,
+              allocationWeight: 1,
+            },
+            {
+              signalTicker: "NVDA",
+              executionTicker: "3NVD.L",
+              enabled: true,
+              allocationWeight: 1,
+            },
+          ],
         },
     currentState: isSuperTrend ? "in_market" : "risk_on",
     modelValue: isSuperTrend ? 12_345 : 10_750,
@@ -186,6 +200,9 @@ test("strategy performance shows SMA200 model stats and current regime", () => {
   assert.match(html, /Nasdaq SMA200 Regime/);
   assert.match(html, /risk on/);
   assert.match(html, /QQQ3\.L/);
+  assert.match(html, /SMA200 signal\/reference mappings/);
+  assert.match(html, /NVDA/);
+  assert.match(html, /3NVD\.L/);
   assert.match(html, /Reference is above SMA200/);
   assert.match(html, /£10,750/);
 });

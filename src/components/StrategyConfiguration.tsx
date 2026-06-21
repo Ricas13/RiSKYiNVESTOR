@@ -36,6 +36,8 @@ const catalogueCategories: TickerCatalogueCategory[] = [
   "UK bond/cash-like/risk-off",
   "Other watchlist",
 ];
+type TickerPairRow =
+  StrategyConfigurationValue["strategies"]["dailySuperTrend"]["watchlist"][number];
 
 export function StrategyConfiguration({
   configuration,
@@ -116,12 +118,18 @@ export function StrategyConfiguration({
 
   function updateWatchlist(
     index: number,
-    values: Partial<
-      StrategyConfigurationValue["strategies"]["dailySuperTrend"]["watchlist"][number]
-    >,
+    values: Partial<TickerPairRow>,
   ) {
     updateSuperTrend({
       watchlist: superTrend.watchlist.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, ...values } : row,
+      ),
+    });
+  }
+
+  function updateSmaWatchlist(index: number, values: Partial<TickerPairRow>) {
+    updateSma({
+      watchlist: sma.watchlist.map((row, rowIndex) =>
         rowIndex === index ? { ...row, ...values } : row,
       ),
     });
@@ -148,6 +156,9 @@ export function StrategyConfiguration({
         next.strategies.nasdaqSma200 = {
           ...preset.configuration.strategies.nasdaqSma200,
           enabled: false,
+          watchlist: preset.configuration.strategies.nasdaqSma200.watchlist.map(
+            (row) => ({ ...row, enabled: false }),
+          ),
         };
       }
       return next;
@@ -157,10 +168,16 @@ export function StrategyConfiguration({
   }
 
   function addWatchlistRow(
-    row: StrategyConfigurationValue["strategies"]["dailySuperTrend"]["watchlist"][number],
+    row: TickerPairRow,
   ) {
     updateSuperTrend({
       watchlist: [...superTrend.watchlist, row],
+    });
+  }
+
+  function addSmaWatchlistRow(row: TickerPairRow) {
+    updateSma({
+      watchlist: [...sma.watchlist, row],
     });
   }
 
@@ -190,6 +207,37 @@ export function StrategyConfiguration({
         ...superTrend.watchlist.slice(index + 1),
       ],
     });
+  }
+
+  function duplicateSmaWatchlistRow(index: number) {
+    const row = sma.watchlist[index];
+    updateSma({
+      watchlist: [
+        ...sma.watchlist.slice(0, index + 1),
+        { ...row, enabled: false },
+        ...sma.watchlist.slice(index + 1),
+      ],
+    });
+  }
+
+  function copySuperTrendRowsToSma() {
+    if (
+      sma.watchlist.length > 0 &&
+      !window.confirm(
+        "Replace current SMA200 ticker-pair rows with disabled copies of the SuperTrend universe?",
+      )
+    ) {
+      return;
+    }
+    updateSma({
+      watchlist: superTrend.watchlist.map((row) => ({
+        signalTicker: row.signalTicker,
+        executionTicker: row.executionTicker,
+        enabled: false,
+        allocationWeight: 1,
+      })),
+    });
+    setMessage("SuperTrend ticker-pair universe copied into SMA200 as disabled rows.");
   }
 
   function resetDraft() {
@@ -657,6 +705,160 @@ export function StrategyConfiguration({
               updateSma({ annualInstrumentCostPercent })
             }
           />
+        </div>
+
+        <div className="strategy-config__watchlist-heading">
+          <div>
+            <h4>SMA200 ticker-pair mappings</h4>
+            <p>
+              Each enabled row calculates SMA200 on the unleveraged signal
+              ticker and holds the leveraged execution ticker when risk-on.
+              Rows use equal-weight model sleeves and stay disabled until
+              explicitly enabled.
+            </p>
+          </div>
+          <div className="strategy-config__row-actions">
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={copySuperTrendRowsToSma}
+            >
+              <Copy size={15} /> Copy SuperTrend universe
+            </button>
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() =>
+                addSmaWatchlistRow({
+                  signalTicker: "",
+                  executionTicker: "",
+                  enabled: false,
+                  allocationWeight: 1,
+                })
+              }
+            >
+              <Plus size={15} /> Add SMA mapping
+            </button>
+          </div>
+        </div>
+
+        <div className="table-scroll">
+          <table className="data-table strategy-config__watchlist">
+            <thead>
+              <tr>
+                <th>Enabled</th>
+                <th>Signal/reference ticker</th>
+                <th>Leveraged execution ticker</th>
+                <th>Weight</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sma.watchlist.length === 0 && (
+                <tr>
+                  <td colSpan={5}>
+                    No SMA200 multi-ticker rows configured. The legacy
+                    single-pair reference/risk-on fields above will be used if
+                    the strategy is enabled.
+                  </td>
+                </tr>
+              )}
+              {sma.watchlist.map((row, index) => {
+                const signalError = tickerError(
+                  row.signalTicker,
+                  row.enabled || (sma.enabled && sma.watchlist.length > 0),
+                );
+                const executionError = tickerError(
+                  row.executionTicker,
+                  row.enabled || (sma.enabled && sma.watchlist.length > 0),
+                );
+                return (
+                  <tr key={`sma-${index}-${row.signalTicker}-${row.executionTicker}`}>
+                    <td>
+                      <input
+                        aria-label={`Enable SMA200 row ${index + 1}`}
+                        type="checkbox"
+                        checked={row.enabled}
+                        onChange={(event) =>
+                          updateSmaWatchlist(index, {
+                            enabled: event.target.checked,
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <TickerPicker
+                        label={`SMA200 signal ticker ${index + 1}`}
+                        value={row.signalTicker}
+                        catalogue={enabledCatalogue}
+                        categories={[
+                          "Nasdaq reference",
+                          "UK broad equity ETF",
+                          "Other watchlist",
+                        ]}
+                        error={signalError}
+                        onChange={(signalTicker) =>
+                          updateSmaWatchlist(index, { signalTicker })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <TickerPicker
+                        label={`SMA200 execution ticker ${index + 1}`}
+                        value={row.executionTicker}
+                        catalogue={enabledCatalogue}
+                        categories={["UK leveraged Nasdaq", "Other watchlist"]}
+                        error={executionError}
+                        onChange={(executionTicker) =>
+                          updateSmaWatchlist(index, { executionTicker })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        aria-label={`SMA200 allocation weight ${index + 1}`}
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={row.allocationWeight}
+                        onChange={(event) =>
+                          updateSmaWatchlist(index, {
+                            allocationWeight: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <div className="strategy-config__row-actions">
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Duplicate SMA200 row ${index + 1}`}
+                          onClick={() => duplicateSmaWatchlistRow(index)}
+                        >
+                          <Copy size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Remove SMA200 row ${index + 1}`}
+                          onClick={() =>
+                            updateSma({
+                              watchlist: sma.watchlist.filter(
+                                (_, rowIndex) => rowIndex !== index,
+                              ),
+                            })
+                          }
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </fieldset>
 

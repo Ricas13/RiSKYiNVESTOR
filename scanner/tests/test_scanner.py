@@ -71,6 +71,7 @@ def configuration(
     sma_review_cadence="daily",
     sma_annual_cost=0.75,
     sma_transaction_cost=0.1,
+    sma_watchlist: list[dict[str, object]] | None = None,
 ):
     return {
         "version": 1,
@@ -105,6 +106,7 @@ def configuration(
                 "enabled": sma_enabled,
                 "referenceTicker": "REFERENCE",
                 "riskOnTicker": "RISKON",
+                "watchlist": sma_watchlist if sma_watchlist is not None else [],
                 "riskOffMode": "cash",
                 "riskOffTicker": "",
                 "smaLength": 3,
@@ -126,6 +128,10 @@ class Provider:
             "EXEC": bars([10, 10, 10, 10, 12, 13, 14]),
             "REFERENCE": bars([10, 10, 10, 12, 13]),
             "RISKON": bars([10, 10, 10, 11, 12]),
+            "REFA": bars([10, 10, 10, 12, 13]),
+            "EXEA": bars([100, 100, 100, 110, 120]),
+            "REFB": bars([20, 20, 20, 24, 25]),
+            "EXEB": bars([50, 50, 50, 55, 60]),
         }
 
     def fetch(self, ticker):
@@ -163,10 +169,44 @@ def test_configuration_validation_and_disabled_behavior(tmp_path):
     valid = validate_config(configuration())
     assert valid.supertrend.enabled is True
     assert valid.sma.sma_length == 3
+    assert valid.sma.watchlist == ()
+    multi_sma = validate_config(
+        configuration(
+            sma_watchlist=[
+                {
+                    "signalTicker": "REFA",
+                    "executionTicker": "EXEA",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+                {
+                    "signalTicker": "REFB",
+                    "executionTicker": "EXEB",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+            ]
+        )
+    )
+    assert [row.signal_ticker for row in multi_sma.sma.watchlist] == [
+        "REFA",
+        "REFB",
+    ]
     invalid = configuration()
     invalid["strategies"]["nasdaqSma200"]["riskOffMode"] = "instrument"
     with pytest.raises(ConfigurationError):
         validate_config(invalid)
+    invalid_sma_watchlist = configuration()
+    invalid_sma_watchlist["strategies"]["nasdaqSma200"]["watchlist"] = [
+        {
+            "signalTicker": "REFA",
+            "executionTicker": "EXEA",
+            "enabled": False,
+            "allocationWeight": 1,
+        }
+    ]
+    with pytest.raises(ConfigurationError, match="enabled watchlist row"):
+        validate_config(invalid_sma_watchlist)
     disabled = validate_config(configuration(False, False))
     snapshot = ScannerEngine(
         disabled, Provider(), tmp_path / "state", tmp_path / "output"
@@ -411,6 +451,112 @@ def test_sma_daily_and_weekly_cadence_are_historical_and_idempotent(tmp_path):
         event["eventId"]
         for event in strategy(repeated, "nasdaq-sma200-3x")["events"]
     ] == [event["eventId"] for event in weekly_strategy["events"]]
+
+
+def test_sma_multi_ticker_book_opens_independent_execution_positions(tmp_path):
+    provider = Provider()
+    config = validate_config(
+        configuration(
+            super_enabled=False,
+            sma_enabled=True,
+            sma_annual_cost=0,
+            sma_transaction_cost=0,
+            sma_watchlist=[
+                {
+                    "signalTicker": "REFA",
+                    "executionTicker": "EXEA",
+                    "enabled": True,
+                    "allocationWeight": 10,
+                },
+                {
+                    "signalTicker": "REFB",
+                    "executionTicker": "EXEB",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+            ],
+        )
+    )
+
+    snapshot = ScannerEngine(
+        config,
+        provider,
+        tmp_path / "sma-multi-state",
+        tmp_path / "sma-multi-output",
+    ).scan()
+    sma = strategy(snapshot, "nasdaq-sma200-3x")
+
+    assert sma["currentState"] == "risk_on"
+    assert sma["parameters"]["watchlist"][0]["signalTicker"] == "REFA"
+    assert {event["signalTicker"] for event in sma["events"]} == {"REFA", "REFB"}
+    assert {event["executionTicker"] for event in sma["events"]} == {"EXEA", "EXEB"}
+    assert {position["signalTicker"] for position in sma["virtualPositions"]} == {
+        "REFA",
+        "REFB",
+    }
+    assert {position["executionTicker"] for position in sma["virtualPositions"]} == {
+        "EXEA",
+        "EXEB",
+    }
+    assert [position["allocation"] for position in sma["virtualPositions"]] == [
+        10_000,
+        10_000,
+    ]
+    assert sma["modelValue"] == pytest.approx(24_000)
+    assert sma["exposurePercent"] == pytest.approx(100)
+
+
+def test_sma_multi_ticker_exit_uses_signal_ticker_and_closes_execution(tmp_path):
+    provider = Provider()
+    provider.values.update(
+        {
+            "REFA": bars([10, 10, 10, 12, 13]),
+            "EXEA": bars([100, 100, 100, 110, 120]),
+            "REFB": bars([20, 20, 20, 24, 16]),
+            "EXEB": bars([50, 50, 50, 55, 60]),
+        }
+    )
+    config = validate_config(
+        configuration(
+            super_enabled=False,
+            sma_enabled=True,
+            sma_annual_cost=0,
+            sma_transaction_cost=0,
+            sma_watchlist=[
+                {
+                    "signalTicker": "REFA",
+                    "executionTicker": "EXEA",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+                {
+                    "signalTicker": "REFB",
+                    "executionTicker": "EXEB",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+            ],
+        )
+    )
+
+    snapshot = ScannerEngine(
+        config,
+        provider,
+        tmp_path / "sma-exit-state",
+        tmp_path / "sma-exit-output",
+    ).scan()
+    sma = strategy(snapshot, "nasdaq-sma200-3x")
+
+    assert sma["currentState"] == "mixed"
+    assert event_types(sma) == ["entry", "entry", "exit"]
+    exit_event = [event for event in sma["events"] if event["eventType"] == "exit"][0]
+    assert exit_event["signalTicker"] == "REFB"
+    assert exit_event["executionTicker"] == "EXEB"
+    assert sma["closedVirtualTrades"][0]["signalTicker"] == "REFB"
+    assert sma["closedVirtualTrades"][0]["executionTicker"] == "EXEB"
+    assert [position["executionTicker"] for position in sma["virtualPositions"]] == [
+        "EXEA"
+    ]
 
 
 def test_sma_annual_instrument_cost_is_durable_and_not_double_charged(tmp_path):

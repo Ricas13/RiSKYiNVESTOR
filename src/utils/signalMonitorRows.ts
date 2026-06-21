@@ -31,12 +31,27 @@ export interface Sma200SignalSummary {
   referenceTicker: string | null;
   executionTicker: string | null;
   currentRegime: string;
+  rows: Sma200SignalRow[];
   latestEventType: StrategyEventType | "none";
   latestSignalDate: string | null;
   modelPosition: "open" | "none";
   openPnlValue: number | null;
   openPnlPercent: number | null;
   daysHeld: number | null;
+}
+
+export interface Sma200SignalRow {
+  signalTicker: string;
+  executionTicker: string;
+  enabled: boolean;
+  currentRegime: string;
+  latestEventType: StrategyEventType | "none";
+  latestSignalDate: string | null;
+  modelPosition: "open" | "none";
+  openPnlValue: number | null;
+  openPnlPercent: number | null;
+  daysHeld: number | null;
+  latestReason: string | null;
 }
 
 export interface SignalMonitorModel {
@@ -160,6 +175,7 @@ function toSuperTrendSignalRow(
 
 function toSma200Summary(strategy: MultiStrategyRecord): Sma200SignalSummary {
   const latestEvent = strategy.latestEvent ?? latestEventFrom(strategy.events);
+  const rows = smaRows(strategy);
   const position = strategy.virtualPositions[0];
   return {
     strategy: strategy.name,
@@ -173,6 +189,7 @@ function toSma200Summary(strategy: MultiStrategyRecord): Sma200SignalSummary {
       latestEvent?.executionTicker ??
       textParameter(strategy, "riskOnTicker"),
     currentRegime: strategy.currentState,
+    rows,
     latestEventType: latestEvent?.eventType ?? "none",
     latestSignalDate: latestEvent?.occurredAt ?? null,
     modelPosition: position ? "open" : "none",
@@ -180,6 +197,51 @@ function toSma200Summary(strategy: MultiStrategyRecord): Sma200SignalSummary {
     openPnlPercent: position?.openPnlPercent ?? null,
     daysHeld: position?.daysHeld ?? null,
   };
+}
+
+function smaRows(strategy: MultiStrategyRecord): Sma200SignalRow[] {
+  const rows = watchlistRows(strategy);
+  const effectiveRows =
+    rows.length > 0
+      ? rows
+      : [
+          {
+            signalTicker:
+              strategy.referenceTicker ??
+              textParameter(strategy, "referenceTicker") ??
+              "",
+            executionTicker:
+              textParameter(strategy, "riskOnTicker") ??
+              strategy.executionTicker ??
+              "",
+            enabled: strategy.enabled,
+          },
+        ].filter((row) => row.signalTicker || row.executionTicker);
+  return effectiveRows.map((row) => {
+    const position = findPosition(
+      strategy.virtualPositions,
+      row.signalTicker,
+      row.executionTicker,
+    );
+    const latestEvent = latestMatchingEvent(
+      strategy.events,
+      row.signalTicker,
+      row.executionTicker,
+    );
+    return {
+      signalTicker: row.signalTicker,
+      executionTicker: row.executionTicker,
+      enabled: row.enabled,
+      currentRegime: position ? "risk_on" : "risk_off",
+      latestEventType: latestEvent?.eventType ?? "none",
+      latestSignalDate: latestEvent?.occurredAt ?? null,
+      modelPosition: position ? "open" : "none",
+      openPnlValue: position?.openPnlValue ?? null,
+      openPnlPercent: position?.openPnlPercent ?? null,
+      daysHeld: position?.daysHeld ?? null,
+      latestReason: latestEvent?.reason ?? position?.reason ?? null,
+    };
+  });
 }
 
 function watchlistRows(strategy: MultiStrategyRecord): WatchlistRow[] {

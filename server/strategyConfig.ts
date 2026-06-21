@@ -72,6 +72,12 @@ export interface StrategyConfiguration {
       enabled: boolean;
       referenceTicker: string;
       riskOnTicker: string;
+      watchlist: Array<{
+        signalTicker: string;
+        executionTicker: string;
+        enabled: boolean;
+        allocationWeight: number;
+      }>;
       riskOffMode: "cash" | "instrument";
       riskOffTicker: string;
       smaLength: number;
@@ -110,6 +116,7 @@ export const defaultStrategyConfiguration: StrategyConfiguration = {
       enabled: false,
       referenceTicker: "",
       riskOnTicker: "",
+      watchlist: [],
       riskOffMode: "cash",
       riskOffTicker: "",
       smaLength: 200,
@@ -281,6 +288,44 @@ export function validateStrategyConfiguration(
     "Nasdaq SMA200 Regime",
   );
   const smaEnabled = enabledValue(sma.enabled);
+  const smaWatchlistRaw = Array.isArray(sma.watchlist)
+    ? sma.watchlist
+    : [];
+  const smaWatchlist = smaWatchlistRaw.map((value, index) => {
+    const row = objectValue(value, `SMA200 watchlist row ${index + 1}`);
+    const enabled = enabledValue(row.enabled);
+    return {
+      signalTicker: tickerValue(
+        row.signalTicker,
+        `SMA200 watchlist row ${index + 1} signal ticker`,
+        enabled || (smaEnabled && smaWatchlistRaw.length > 0),
+      ),
+      executionTicker: tickerValue(
+        row.executionTicker,
+        `SMA200 watchlist row ${index + 1} execution ticker`,
+        enabled || (smaEnabled && smaWatchlistRaw.length > 0),
+      ),
+      enabled,
+      allocationWeight: numberValue(
+        row.allocationWeight ?? 1,
+        `SMA200 watchlist row ${index + 1} allocation weight`,
+        0.01,
+        100,
+      ),
+    };
+  });
+  if (smaEnabled && smaWatchlistRaw.length > 0 && !smaWatchlist.some((row) => row.enabled)) {
+    throw new Error(
+      "Nasdaq SMA200 requires at least one enabled watchlist row when watchlist rows are configured.",
+    );
+  }
+  const smaMappingKeys = smaWatchlist
+    .filter((row) => row.signalTicker || row.executionTicker)
+    .map((row) => `${row.signalTicker}|${row.executionTicker}`);
+  if (new Set(smaMappingKeys).size !== smaMappingKeys.length) {
+    throw new Error("Nasdaq SMA200 watchlist mappings must be unique.");
+  }
+  const legacySmaRequired = smaEnabled && smaWatchlistRaw.length === 0;
   const riskOffMode = textValue(sma.riskOffMode, "Risk-off mode");
   if (!["cash", "instrument"].includes(riskOffMode)) {
     throw new Error("Risk-off mode must be cash or instrument.");
@@ -365,13 +410,14 @@ export function validateStrategyConfiguration(
         referenceTicker: tickerValue(
           sma.referenceTicker,
           "Nasdaq reference ticker",
-          smaEnabled,
+          legacySmaRequired,
         ),
         riskOnTicker: tickerValue(
           sma.riskOnTicker,
           "Nasdaq risk-on ticker",
-          smaEnabled,
+          legacySmaRequired,
         ),
+        watchlist: smaWatchlist,
         riskOffMode:
           riskOffMode as StrategyConfiguration["strategies"]["nasdaqSma200"]["riskOffMode"],
         riskOffTicker,
@@ -511,6 +557,14 @@ export const strategyConfigurationPresets: StrategyConfigurationPreset[] = [
         enabled: false,
         referenceTicker: "QQQ.US",
         riskOnTicker: "QQQ3.UK",
+        watchlist: [
+          {
+            signalTicker: "QQQ.US",
+            executionTicker: "QQQ3.UK",
+            enabled: false,
+            allocationWeight: 1,
+          },
+        ],
         riskOffMode: "cash",
         riskOffTicker: "",
         smaLength: 200,

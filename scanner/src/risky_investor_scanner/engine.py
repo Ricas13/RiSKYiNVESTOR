@@ -203,104 +203,200 @@ class ScannerEngine:
         return result
 
     def _scan_sma(self) -> dict[str, Any]:
+        return self._scan_sma_book()
+
+    def _scan_sma_book(self) -> dict[str, Any]:
         config = self.config.sma
-        parameters = {'referenceTicker': config.reference_ticker, 'riskOnTicker': config.risk_on_ticker, 'riskOffMode': config.risk_off_mode, 'riskOffTicker': config.risk_off_ticker, 'smaLength': config.sma_length, 'reviewCadence': config.review_cadence, 'riskOnThresholdPercent': config.risk_on_threshold_percent, 'riskOffThresholdPercent': config.risk_off_threshold_percent, 'modelStartingCapital': config.model_starting_capital, 'transactionCostPercent': config.transaction_cost_percent, 'annualInstrumentCostPercent': config.annual_instrument_cost_percent}
-        result = _empty_strategy(SMA_ID, 'Nasdaq SMA200 Regime — 3x', config.enabled, f'Independent {config.sma_length}-day SMA regime. Risk-on and risk-off thresholds are evaluated only on the configured {config.review_cadence} cadence.', parameters, configured=bool(config.reference_ticker and config.risk_on_ticker))
+        parameters = {
+            'referenceTicker': config.reference_ticker,
+            'riskOnTicker': config.risk_on_ticker,
+            'watchlist': [
+                {
+                    'signalTicker': row.signal_ticker,
+                    'executionTicker': row.execution_ticker,
+                    'enabled': row.enabled,
+                    'allocationWeight': row.allocation_weight,
+                }
+                for row in config.watchlist
+            ],
+            'riskOffMode': config.risk_off_mode,
+            'riskOffTicker': config.risk_off_ticker,
+            'smaLength': config.sma_length,
+            'reviewCadence': config.review_cadence,
+            'riskOnThresholdPercent': config.risk_on_threshold_percent,
+            'riskOffThresholdPercent': config.risk_off_threshold_percent,
+            'modelStartingCapital': config.model_starting_capital,
+            'transactionCostPercent': config.transaction_cost_percent,
+            'annualInstrumentCostPercent': config.annual_instrument_cost_percent,
+        }
+        rows, legacy_single_pair = _sma_effective_rows(config)
+        result = _empty_strategy(
+            SMA_ID,
+            'Nasdaq SMA200 Regime — 3x',
+            config.enabled,
+            (
+                f'Independent {config.sma_length}-day SMA regime. Each enabled '
+                'ticker pair is evaluated from its unleveraged signal ticker '
+                'and holds only its configured execution ticker when risk-on.'
+            ),
+            parameters,
+            configured=bool(rows),
+        )
         if not config.enabled:
             return result
         fingerprint = _fingerprint(SMA_ID, parameters)
         guarded = self._configuration_guard(SMA_ID, fingerprint, result)
         if guarded is not None:
             return guarded
-        reference = self._fetch(config.reference_ticker)
-        price_histories: dict[str, list[PriceBar]] = {config.risk_on_ticker: self._fetch(config.risk_on_ticker)}
-        if config.risk_off_mode == 'instrument' and config.risk_off_ticker:
-            price_histories[config.risk_off_ticker] = self._fetch(config.risk_off_ticker)
-        evaluation_points = _sma_evaluation_points(reference, config.sma_length, config.review_cadence)
-        if not reference or not price_histories[config.risk_on_ticker]:
+        if not rows:
             return result
-        if not evaluation_points:
-            result['dataFreshness'] = reference[-1].day.isoformat()
+
+        row_capital = config.model_starting_capital / len(rows)
+        row_results: list[dict[str, Any]] = []
+        freshness: list[str] = []
+        for row in rows:
+            reference = self._fetch(row.signal_ticker)
+            execution = self._fetch(row.execution_ticker)
+            if reference:
+                freshness.append(reference[-1].day.isoformat())
+            if execution:
+                freshness.append(execution[-1].day.isoformat())
+            risk_off_ticker = (
+                config.risk_off_ticker
+                if legacy_single_pair
+                and config.risk_off_mode == 'instrument'
+                and config.risk_off_ticker
+                else None
+            )
+            price_histories: dict[str, list[PriceBar]] = {
+                row.execution_ticker: execution
+            }
+            if risk_off_ticker:
+                price_histories[risk_off_ticker] = self._fetch(risk_off_ticker)
+                if price_histories[risk_off_ticker]:
+                    freshness.append(
+                        price_histories[risk_off_ticker][-1].day.isoformat()
+                    )
+            row_results.append(
+                _scan_sma_row(
+                    config,
+                    row,
+                    row_capital,
+                    reference,
+                    price_histories,
+                    risk_off_ticker,
+                )
+            )
+
+        usable_results = [item for item in row_results if item['dataFreshness']]
+        if not usable_results:
+            if freshness:
+                result['dataFreshness'] = max(freshness)
             return result
-        cash = config.model_starting_capital
-        state = 'risk_off'
-        current_ticker: str | None = None
-        quantity = 0.0
-        entry_price: float | None = None
-        entry_date: date | None = None
-        regime_start_date: str | None = None
-        allocation = 0.0
-        last_cost_accrual_date: date | None = None
-        total_cost = 0.0
-        closed: list[dict[str, Any]] = []
-        events: list[dict[str, Any]] = []
-        equity: list[dict[str, Any]] = []
-        last_distance = 0.0
-        last_evaluated_period: str | None = None
-        for index, period_key in evaluation_points:
-            day = reference[index].day
-            average = _sma_at(reference, index, config.sma_length)
-            if average is None:
-                continue
-            distance = (reference[index].close / average - 1) * 100
-            last_distance = distance
-            last_evaluated_period = period_key
-            if current_ticker and quantity > 0:
-                quantity, last_cost_accrual_date, accrued = _accrue_cost(quantity, current_ticker, last_cost_accrual_date, day, price_histories, config.annual_instrument_cost_percent)
-                total_cost += accrued
-            desired = state
-            if distance >= config.risk_on_threshold_percent:
-                desired = 'risk_on'
-            elif distance <= config.risk_off_threshold_percent:
-                desired = 'risk_off'
-            desired_ticker = _sma_execution_ticker(config, desired)
-            if desired != state or desired_ticker != current_ticker:
-                if current_ticker and quantity > 0 and (entry_price is not None):
-                    price_bar = _price_on_or_before(price_histories[current_ticker], day)
-                    if price_bar is not None:
-                        proceeds = quantity * price_bar.close
-                        proceeds -= proceeds * config.transaction_cost_percent / 100
-                        pnl = proceeds - allocation
-                        closed.append({'positionId': event_id(SMA_ID, 'position', entry_date.isoformat() if entry_date else day.isoformat(), current_ticker), 'label': 'Virtual model position', 'signalTicker': config.reference_ticker, 'executionTicker': current_ticker, 'state': 'closed', 'entryTimestamp': entry_date.isoformat() if entry_date else None, 'entryPrice': entry_price, 'exitTimestamp': day.isoformat(), 'exitPrice': price_bar.close, 'quantity': quantity, 'allocation': allocation, 'pnlValue': pnl, 'pnlPercent': pnl / max(allocation, 1e-06) * 100, 'exitReason': f"SMA regime changed to {desired.replace('_', ' ')}."})
-                        cash = proceeds
-                    quantity = 0.0
-                    entry_price = None
-                    entry_date = None
-                    allocation = 0.0
-                    last_cost_accrual_date = None
-                state = desired
-                current_ticker = desired_ticker
-                regime_start_date = day.isoformat()
-                if desired_ticker:
-                    price_bar = _price_on_or_before(price_histories[desired_ticker], day)
-                    if price_bar is not None and cash > 0:
-                        allocation = cash
-                        cost = allocation * config.transaction_cost_percent / 100
-                        quantity = max(0.0, (allocation - cost) / price_bar.close)
-                        entry_price = price_bar.close
-                        entry_date = day
-                        cash = 0.0
-                        last_cost_accrual_date = day
-                    else:
-                        current_ticker = None
-                identifier = event_id(SMA_ID, desired, day.isoformat(), desired_ticker or 'cash')
-                events.append(_event(identifier, SMA_ID, 'entry' if desired == 'risk_on' else 'exit', day.isoformat(), config.reference_ticker, desired_ticker or 'CASH', f"Reference closed {distance:.2f}% from its {config.sma_length}-day average; regime changed to {desired.replace('_', ' ')}."))
-            invested = _position_value(price_histories, current_ticker, quantity, day)
-            equity.append({'date': day.isoformat(), 'value': cash + invested})
-        latest_reference_day = reference[-1].day
-        if current_ticker and quantity > 0:
-            quantity, last_cost_accrual_date, accrued = _accrue_cost(quantity, current_ticker, last_cost_accrual_date, latest_reference_day, price_histories, config.annual_instrument_cost_percent)
-            total_cost += accrued
-        invested = _position_value(price_histories, current_ticker, quantity, latest_reference_day)
-        if equity and equity[-1]['date'] != latest_reference_day.isoformat():
-            equity.append({'date': latest_reference_day.isoformat(), 'value': cash + invested})
+
+        cash = sum(item['cash'] for item in row_results)
+        invested = sum(item['investedValue'] for item in row_results)
         model_value = cash + invested
-        peak = max((item['value'] for item in equity)) if equity else model_value
-        latest_price = _price_on_or_before(price_histories[current_ticker], latest_reference_day).close if current_ticker and _price_on_or_before(price_histories[current_ticker], latest_reference_day) else None
-        position = [{'positionId': f'{SMA_ID}:current', 'label': 'Virtual model position', 'signalTicker': config.reference_ticker, 'executionTicker': current_ticker, 'state': state, 'entryTimestamp': entry_date.isoformat() if entry_date else None, 'entryPrice': entry_price, 'latestPrice': latest_price, 'quantity': quantity, 'allocation': allocation, 'openPnlValue': invested - allocation, 'openPnlPercent': (invested / max(allocation, 1e-06) - 1) * 100, 'daysHeld': (latest_reference_day - entry_date).days if entry_date else 0, 'latestSignal': state, 'reason': f'Reference is {last_distance:.2f}% from SMA{config.sma_length}.'}] if current_ticker and quantity > 0 else []
-        durable = {'configFingerprint': fingerprint, 'rebuildRequired': False, 'state': state, 'currentState': state, 'regimeStartDate': regime_start_date, 'referenceTicker': config.reference_ticker, 'executionTicker': current_ticker or 'CASH', 'cash': cash, 'quantity': quantity, 'entryPrice': entry_price, 'entryDate': entry_date.isoformat() if entry_date else None, 'allocation': allocation, 'investedValue': invested, 'modelValue': model_value, 'returnPercent': (model_value / config.model_starting_capital - 1) * 100, 'drawdownPercent': (model_value / peak - 1) * 100, 'exposurePercent': invested / max(model_value, 1e-06) * 100, 'equity': _dedupe_equity(equity), 'events': events, 'regimeChangeEvents': events, 'closed': closed, 'positions': position, 'lastEvaluatedMarketPeriod': last_evaluated_period, 'lastCostAccrualDate': last_cost_accrual_date.isoformat() if last_cost_accrual_date else None, 'totalInstrumentCost': total_cost, 'dataFreshness': latest_reference_day.isoformat()}
+        equity = _combine_sma_equity(row_results)
+        peak = max((item['value'] for item in equity), default=model_value)
+        events = sorted(
+            [event for item in row_results for event in item['events']],
+            key=lambda item: (
+                item['occurredAt'],
+                item['signalTicker'],
+                item['executionTicker'],
+            ),
+        )
+        positions = sorted(
+            [position for item in row_results for position in item['positions']],
+            key=lambda item: (item['signalTicker'], item['executionTicker']),
+        )
+        closed = sorted(
+            [trade for item in row_results for trade in item['closed']],
+            key=lambda item: (
+                str(item.get('exitTimestamp')),
+                str(item.get('signalTicker')),
+                str(item.get('executionTicker')),
+            ),
+        )
+        current_state = _sma_book_state(row_results)
+        latest_event = events[-1] if events else None
+        data_freshness = max(item['dataFreshness'] for item in usable_results)
+        legacy_reference = rows[0].signal_ticker if legacy_single_pair else None
+        legacy_execution = (
+            positions[0]['executionTicker']
+            if legacy_single_pair and positions
+            else rows[0].execution_ticker
+            if legacy_single_pair
+            else None
+        )
+        durable = {
+            'configFingerprint': fingerprint,
+            'rebuildRequired': False,
+            'state': current_state,
+            'currentState': current_state,
+            'regimeStartDate': latest_event['occurredAt'] if latest_event else None,
+            'referenceTicker': legacy_reference,
+            'executionTicker': legacy_execution
+            or ('CASH' if legacy_single_pair else None),
+            'cash': cash,
+            'investedValue': invested,
+            'modelValue': model_value,
+            'returnPercent': (model_value / config.model_starting_capital - 1)
+            * 100,
+            'drawdownPercent': (model_value / peak - 1) * 100 if peak else 0,
+            'exposurePercent': invested / max(model_value, 1e-06) * 100,
+            'equity': _dedupe_equity(equity),
+            'events': events,
+            'regimeChangeEvents': events,
+            'closed': closed,
+            'positions': positions,
+            'lastEvaluatedMarketPeriod': max(
+                (
+                    str(item['lastEvaluatedMarketPeriod'])
+                    for item in row_results
+                    if item['lastEvaluatedMarketPeriod']
+                ),
+                default=None,
+            ),
+            'lastCostAccrualDate': max(
+                (
+                    str(item['lastCostAccrualDate'])
+                    for item in row_results
+                    if item['lastCostAccrualDate']
+                ),
+                default=None,
+            ),
+            'totalInstrumentCost': sum(
+                item['totalInstrumentCost'] for item in row_results
+            ),
+            'dataFreshness': data_freshness,
+        }
         self.state.setdefault('strategies', {})[SMA_ID] = durable
-        result.update({'status': 'current', 'currentState': durable['currentState'], 'regimeStartDate': durable['regimeStartDate'], 'referenceTicker': config.reference_ticker, 'executionTicker': durable['executionTicker'], 'lastEvaluatedMarketPeriod': last_evaluated_period, 'lastCostAccrualDate': durable['lastCostAccrualDate'], 'modelValue': model_value, 'cash': cash, 'investedValue': invested, 'returnPercent': durable['returnPercent'], 'drawdownPercent': durable['drawdownPercent'], 'exposurePercent': durable['exposurePercent'], 'equitySnapshots': durable['equity'], 'virtualPositions': position, 'closedVirtualTrades': closed, 'events': events, 'regimeChangeEvents': events, 'latestEvent': events[-1] if events else None, 'dataFreshness': latest_reference_day.isoformat()})
+        result.update(
+            {
+                'status': 'current',
+                'currentState': durable['currentState'],
+                'regimeStartDate': durable['regimeStartDate'],
+                'referenceTicker': durable['referenceTicker'],
+                'executionTicker': durable['executionTicker'],
+                'lastEvaluatedMarketPeriod': durable['lastEvaluatedMarketPeriod'],
+                'lastCostAccrualDate': durable['lastCostAccrualDate'],
+                'modelValue': model_value,
+                'cash': cash,
+                'investedValue': invested,
+                'returnPercent': durable['returnPercent'],
+                'drawdownPercent': durable['drawdownPercent'],
+                'exposurePercent': durable['exposurePercent'],
+                'equitySnapshots': durable['equity'],
+                'virtualPositions': positions,
+                'closedVirtualTrades': closed,
+                'events': events,
+                'regimeChangeEvents': events,
+                'latestEvent': latest_event,
+                'dataFreshness': data_freshness,
+            }
+        )
         return result
 
 def _event(identifier: str, strategy_id: str, event_type: str, occurred_at: str, signal_ticker: str, execution_ticker: str, reason: str) -> dict[str, Any]:
@@ -319,6 +415,265 @@ def _json_clone(value: Any) -> Any:
 
 def _row_key(row: WatchlistRow) -> str:
     return f'{row.signal_ticker}|{row.execution_ticker}'
+
+def _sma_effective_rows(config: Any) -> tuple[list[WatchlistRow], bool]:
+    enabled_watchlist = [row for row in config.watchlist if row.enabled]
+    if config.watchlist:
+        return (enabled_watchlist, False)
+    if config.reference_ticker and config.risk_on_ticker:
+        return (
+            [
+                WatchlistRow(
+                    signal_ticker=config.reference_ticker,
+                    execution_ticker=config.risk_on_ticker,
+                    enabled=True,
+                    allocation_weight=1,
+                )
+            ],
+            True,
+        )
+    return ([], False)
+
+def _scan_sma_row(
+    config: Any,
+    row: WatchlistRow,
+    row_capital: float,
+    reference: list[PriceBar],
+    price_histories: dict[str, list[PriceBar]],
+    risk_off_ticker: str | None,
+) -> dict[str, Any]:
+    cash = row_capital
+    state = 'risk_off'
+    current_ticker: str | None = None
+    quantity = 0.0
+    entry_price: float | None = None
+    entry_date: date | None = None
+    allocation = 0.0
+    last_cost_accrual_date: date | None = None
+    total_cost = 0.0
+    closed: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+    equity: list[dict[str, Any]] = []
+    last_distance = 0.0
+    last_evaluated_period: str | None = None
+    execution_bars = price_histories.get(row.execution_ticker, [])
+    if not reference or not execution_bars:
+        return _empty_sma_row_result(row, cash, reference[-1].day if reference else None)
+    evaluation_points = _sma_evaluation_points(
+        reference,
+        config.sma_length,
+        config.review_cadence,
+    )
+    if not evaluation_points:
+        return _empty_sma_row_result(row, cash, reference[-1].day)
+    row_key = _row_key(row)
+    for index, period_key in evaluation_points:
+        day = reference[index].day
+        average = _sma_at(reference, index, config.sma_length)
+        if average is None:
+            continue
+        distance = (reference[index].close / average - 1) * 100
+        last_distance = distance
+        last_evaluated_period = period_key
+        if current_ticker and quantity > 0:
+            quantity, last_cost_accrual_date, accrued = _accrue_cost(
+                quantity,
+                current_ticker,
+                last_cost_accrual_date,
+                day,
+                price_histories,
+                config.annual_instrument_cost_percent,
+            )
+            total_cost += accrued
+        desired = state
+        if distance >= config.risk_on_threshold_percent:
+            desired = 'risk_on'
+        elif distance <= config.risk_off_threshold_percent:
+            desired = 'risk_off'
+        desired_ticker = row.execution_ticker if desired == 'risk_on' else risk_off_ticker
+        if desired != state or desired_ticker != current_ticker:
+            if current_ticker and quantity > 0 and entry_price is not None:
+                price_bar = _price_on_or_before(price_histories[current_ticker], day)
+                if price_bar is not None:
+                    proceeds = quantity * price_bar.close
+                    proceeds -= proceeds * config.transaction_cost_percent / 100
+                    pnl = proceeds - allocation
+                    closed.append(
+                        {
+                            'positionId': event_id(
+                                SMA_ID,
+                                'position',
+                                entry_date.isoformat() if entry_date else day.isoformat(),
+                                row_key,
+                            ),
+                            'label': 'Virtual model position',
+                            'signalTicker': row.signal_ticker,
+                            'executionTicker': current_ticker,
+                            'state': 'closed',
+                            'entryTimestamp': entry_date.isoformat()
+                            if entry_date
+                            else None,
+                            'entryPrice': entry_price,
+                            'exitTimestamp': day.isoformat(),
+                            'exitPrice': price_bar.close,
+                            'quantity': quantity,
+                            'allocation': allocation,
+                            'pnlValue': pnl,
+                            'pnlPercent': pnl / max(allocation, 1e-06) * 100,
+                            'exitReason': (
+                                f'{row.signal_ticker} SMA regime changed to '
+                                f"{desired.replace('_', ' ')}."
+                            ),
+                        }
+                    )
+                    cash = proceeds
+                quantity = 0.0
+                entry_price = None
+                entry_date = None
+                allocation = 0.0
+                last_cost_accrual_date = None
+            state = desired
+            current_ticker = desired_ticker
+            if desired_ticker:
+                price_bar = _price_on_or_before(price_histories[desired_ticker], day)
+                if price_bar is not None and cash > 0:
+                    allocation = cash
+                    cost = allocation * config.transaction_cost_percent / 100
+                    quantity = max(0.0, (allocation - cost) / price_bar.close)
+                    entry_price = price_bar.close
+                    entry_date = day
+                    cash = 0.0
+                    last_cost_accrual_date = day
+                else:
+                    current_ticker = None
+            identifier = event_id(SMA_ID, desired, day.isoformat(), row_key)
+            events.append(
+                _event(
+                    identifier,
+                    SMA_ID,
+                    'entry' if desired == 'risk_on' else 'exit',
+                    day.isoformat(),
+                    row.signal_ticker,
+                    desired_ticker or row.execution_ticker,
+                    (
+                        f'{row.signal_ticker} closed {distance:.2f}% from its '
+                        f'{config.sma_length}-day average; model '
+                        f"{'holds ' + row.execution_ticker if desired == 'risk_on' else 'moves to cash'}."
+                    ),
+                )
+            )
+        invested = _position_value(price_histories, current_ticker, quantity, day)
+        equity.append({'date': day.isoformat(), 'value': cash + invested})
+    latest_reference_day = reference[-1].day
+    if current_ticker and quantity > 0:
+        quantity, last_cost_accrual_date, accrued = _accrue_cost(
+            quantity,
+            current_ticker,
+            last_cost_accrual_date,
+            latest_reference_day,
+            price_histories,
+            config.annual_instrument_cost_percent,
+        )
+        total_cost += accrued
+    invested = _position_value(price_histories, current_ticker, quantity, latest_reference_day)
+    if equity and equity[-1]['date'] != latest_reference_day.isoformat():
+        equity.append({'date': latest_reference_day.isoformat(), 'value': cash + invested})
+    latest_bar = (
+        _price_on_or_before(price_histories[current_ticker], latest_reference_day)
+        if current_ticker
+        else None
+    )
+    positions = [
+        {
+            'positionId': event_id(
+                SMA_ID,
+                'position',
+                entry_date.isoformat() if entry_date else latest_reference_day.isoformat(),
+                row_key,
+            ),
+            'label': 'Virtual model position',
+            'signalTicker': row.signal_ticker,
+            'executionTicker': current_ticker,
+            'state': state,
+            'entryTimestamp': entry_date.isoformat() if entry_date else None,
+            'entryPrice': entry_price,
+            'latestPrice': latest_bar.close if latest_bar else None,
+            'quantity': quantity,
+            'allocation': allocation,
+            'openPnlValue': invested - allocation,
+            'openPnlPercent': (invested / max(allocation, 1e-06) - 1) * 100,
+            'daysHeld': (latest_reference_day - entry_date).days
+            if entry_date
+            else 0,
+            'latestSignal': state,
+            'reason': f'{row.signal_ticker} is {last_distance:.2f}% from SMA{config.sma_length}.',
+        }
+    ] if current_ticker and quantity > 0 else []
+    return {
+        'row': row,
+        'cash': cash,
+        'investedValue': invested,
+        'state': state,
+        'positions': positions,
+        'closed': closed,
+        'events': events,
+        'equity': _dedupe_equity(equity),
+        'dataFreshness': latest_reference_day.isoformat(),
+        'lastEvaluatedMarketPeriod': last_evaluated_period,
+        'lastCostAccrualDate': last_cost_accrual_date.isoformat()
+        if last_cost_accrual_date
+        else None,
+        'totalInstrumentCost': total_cost,
+    }
+
+def _empty_sma_row_result(
+    row: WatchlistRow,
+    cash: float,
+    freshness_day: date | None,
+) -> dict[str, Any]:
+    return {
+        'row': row,
+        'cash': cash,
+        'investedValue': 0.0,
+        'state': 'awaiting_data',
+        'positions': [],
+        'closed': [],
+        'events': [],
+        'equity': [],
+        'dataFreshness': freshness_day.isoformat() if freshness_day else None,
+        'lastEvaluatedMarketPeriod': None,
+        'lastCostAccrualDate': None,
+        'totalInstrumentCost': 0.0,
+    }
+
+def _combine_sma_equity(row_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    all_dates = sorted(
+        {
+            item['date']
+            for result in row_results
+            for item in result['equity']
+        }
+    )
+    latest_values = [float(result['cash']) for result in row_results]
+    by_row = [
+        {item['date']: float(item['value']) for item in result['equity']}
+        for result in row_results
+    ]
+    combined: list[dict[str, Any]] = []
+    for current_date in all_dates:
+        for index, row_values in enumerate(by_row):
+            if current_date in row_values:
+                latest_values[index] = row_values[current_date]
+        combined.append({'date': current_date, 'value': sum(latest_values)})
+    return combined
+
+def _sma_book_state(row_results: list[dict[str, Any]]) -> str:
+    active = sum(1 for item in row_results if item['positions'])
+    if active == 0:
+        return 'risk_off'
+    if active == len(row_results):
+        return 'risk_on'
+    return 'mixed'
 
 def _price_on_or_before(bars: list[PriceBar], target: date) -> PriceBar | None:
     candidate: PriceBar | None = None

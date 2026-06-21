@@ -259,6 +259,12 @@ export interface StrategyConfiguration {
       enabled: boolean;
       referenceTicker: string;
       riskOnTicker: string;
+      watchlist: Array<{
+        signalTicker: string;
+        executionTicker: string;
+        enabled: boolean;
+        allocationWeight: number;
+      }>;
       riskOffMode: "cash" | "instrument";
       riskOffTicker: string;
       smaLength: number;
