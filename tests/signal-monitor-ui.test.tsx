@@ -3,6 +3,7 @@ import test from "node:test";
 import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ScannerSignalMonitor } from "../src/components/ScannerSignalMonitor";
+import { expandableRows } from "../src/utils/expandableRows";
 import type {
   MultiStrategyPublicState,
   MultiStrategyRecord,
@@ -221,6 +222,82 @@ test("Signal Monitor renders Daily SuperTrend ticker pairs from scanner output",
   assert.match(html, /VT/);
   assert.match(html, /3VT\.L/);
   assert.match(html, /Daily SuperTrend/);
+});
+
+test("expandable row helper shows all rows at ten or fewer and bounds longer lists", () => {
+  const tenRows = Array.from({ length: 10 }, (_, index) => index);
+  const twelveRows = Array.from({ length: 12 }, (_, index) => index);
+  const manyRows = Array.from({ length: 75 }, (_, index) => index);
+
+  assert.deepEqual(expandableRows(tenRows, false), {
+    hasOverflow: false,
+    totalRows: 10,
+    visibleCount: 10,
+    visibleRows: tenRows,
+  });
+  assert.deepEqual(expandableRows(twelveRows, false).visibleRows, tenRows);
+  assert.equal(expandableRows(twelveRows, false).visibleCount, 10);
+  assert.equal(expandableRows(twelveRows, true).visibleCount, 12);
+  assert.equal(
+    expandableRows(manyRows, true, { expandedLimit: 50 }).visibleCount,
+    50,
+  );
+});
+
+test("Signal Monitor ticker-pair table is bounded by default when over ten rows", () => {
+  const watchlist = Array.from({ length: 12 }, (_, index) => ({
+    signalTicker: `SIG${String(index + 1).padStart(2, "0")}`,
+    executionTicker: `EXE${String(index + 1).padStart(2, "0")}.L`,
+    enabled: true,
+    allocationWeight: 1,
+  }));
+  const html = render(
+    monitor(
+      snapshot({
+        strategies: [
+          strategy("daily-supertrend", {
+            parameters: { watchlist },
+            virtualPositions: [],
+            events: [],
+          }),
+          strategy("nasdaq-sma200-3x"),
+        ],
+      }),
+    ),
+  );
+
+  assert.match(html, /Showing 10 of 12/);
+  assert.match(html, /Show all/);
+  assert.match(html, /SIG01/);
+  assert.match(html, /SIG10/);
+  assert.doesNotMatch(html, /SIG11/);
+  assert.doesNotMatch(html, /SIG12/);
+});
+
+test("Signal Monitor ticker-pair table shows ten rows without expand controls", () => {
+  const watchlist = Array.from({ length: 10 }, (_, index) => ({
+    signalTicker: `TEN${String(index + 1).padStart(2, "0")}`,
+    executionTicker: `TEN${String(index + 1).padStart(2, "0")}.L`,
+    enabled: true,
+    allocationWeight: 1,
+  }));
+  const html = render(
+    monitor(
+      snapshot({
+        strategies: [
+          strategy("daily-supertrend", {
+            parameters: { watchlist },
+            virtualPositions: [],
+            events: [],
+          }),
+          strategy("nasdaq-sma200-3x"),
+        ],
+      }),
+    ),
+  );
+
+  assert.doesNotMatch(html, /Showing 10 of 10/);
+  assert.match(html, /TEN10/);
 });
 
 test("Signal Monitor displays performance warnings without breaking signal state", () => {

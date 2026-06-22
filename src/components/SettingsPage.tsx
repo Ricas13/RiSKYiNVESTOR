@@ -516,9 +516,9 @@ export function SettingsPage({
       <SectionHeader
         eyebrow="Delivery history"
         title="Recent notification attempts"
-        copy={`${notifications.retention.retained} retained of ${notifications.retention.maximum} configured records.`}
+        copy={`Shows recent attempts to send notifications. Failed attempts help diagnose webhook or routing problems. ${notifications.retention.retained} retained of ${notifications.retention.maximum} configured records.`}
       />
-      <NotificationHistory deliveries={notifications.deliveries} limit={20} />
+      <NotificationHistory deliveries={notifications.deliveries} />
 
       <SectionHeader
         eyebrow="Authentication"
@@ -549,7 +549,7 @@ export function SettingsPage({
       <SectionHeader
         eyebrow="Data portability"
         title="Export, import and backup"
-        copy="Portable owner records remain available without exposing notification credentials."
+        copy="Backup and restore controls protect your private app data. They do not affect broker accounts because this app does not execute trades."
       />
       <DataPortability download={download} mutate={mutate} />
     </div>
@@ -565,43 +565,47 @@ const notificationRouteRows: Array<{
   {
     key: "dailySummary",
     label: "Daily summary",
-    helper: "Send daily summary to",
+    helper:
+      "Sends a daily overview of scanner status, current positions, warnings, and recent signal activity.",
     severity: false,
   },
   {
     key: "supertrendSignals",
     label: "SuperTrend entry/exit alerts",
-    helper: "Send strategy entries/exits to",
+    helper: "Sends SuperTrend BUY/SELL signal changes for ticker pairs.",
     severity: false,
   },
   {
     key: "sma200Signals",
     label: "SMA200 entry/exit alerts",
-    helper: "Send SMA200 entries/exits to",
+    helper: "Sends SMA200 regime or ticker-pair risk-on/risk-off changes.",
     severity: false,
   },
   {
     key: "scannerErrors",
     label: "Scanner errors",
-    helper: "Send scanner errors to",
+    helper:
+      "Sends scanner failures, market data problems, stale data, or other system issues.",
     severity: true,
   },
   {
     key: "modelWarnings",
     label: "Model performance warnings",
-    helper: "Send model performance warnings to",
+    helper:
+      "Sends warnings when model P/L or backtest results may be distorted by leveraged ETP history, currency units, splits, rebases, or adjusted data.",
     severity: true,
   },
   {
     key: "deliveryFailures",
     label: "Delivery failures",
-    helper: "Send delivery failures to",
+    helper: "Sends notification delivery failure notices for diagnosis.",
     severity: true,
   },
   {
     key: "manualTrades",
     label: "Manual trade journal events",
-    helper: "Send manual trade journal events to",
+    helper:
+      "Optionally sends a journal message when you manually record or close a trade. This does not place broker orders.",
     severity: false,
   },
 ];
@@ -639,8 +643,9 @@ function NotificationRoutingMatrix({
         <div>
           <h2>Notification routing</h2>
           <p>
-            Routes control where each type of alert is sent. Webhook secrets are
-            stored privately and are not displayed after saving.
+            Routes decide which type of alert goes to which destination. For
+            example, daily summaries can go to one webhook while trade
+            entry/exit alerts go to another.
           </p>
         </div>
         <Badge tone="blue">ROUTES</Badge>

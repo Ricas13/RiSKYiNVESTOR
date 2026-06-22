@@ -68,3 +68,36 @@ export function SectionHeader({
     </div>
   );
 }
+
+export function ExpandableRowsControls({
+  expanded,
+  hasOverflow,
+  totalRows,
+  visibleCount,
+  onToggle,
+  expandLabel = "Show more",
+  collapseLabel = "Collapse",
+}: {
+  expanded: boolean;
+  hasOverflow: boolean;
+  totalRows: number;
+  visibleCount: number;
+  onToggle: () => void;
+  expandLabel?: string;
+  collapseLabel?: string;
+}) {
+  if (!hasOverflow) return null;
+  return (
+    <div className="expandable-rows__controls">
+      <span>Showing {visibleCount} of {totalRows}</span>
+      <button
+        type="button"
+        className="button button--secondary"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        {expanded ? collapseLabel : expandLabel}
+      </button>
+    </div>
+  );
+}

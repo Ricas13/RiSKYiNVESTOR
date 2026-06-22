@@ -218,15 +218,74 @@ test("strategy performance shows SMA200 model stats and current regime", () => {
   assert.match(html, /£10,750/);
 });
 
-test("strategy performance renders equity chart and collapses closed virtual trades", () => {
+test("strategy performance renders equity chart and closed virtual trades", () => {
   const html = renderPerformance();
 
   assert.match(html, /Independent equity curve/);
   assert.match(html, /strategy-monitor__chart/);
   assert.match(html, /Closed virtual trades/);
-  assert.match(html, /Show latest 20 closed trades/);
-  assert.doesNotMatch(html, /3SMH\.L/);
+  assert.doesNotMatch(html, /Show latest 20 closed trades/);
+  assert.match(html, /3SMH\.L/);
   assert.match(html, /QQQ3\.L/);
+});
+
+test("strategy performance monitored tickers table is bounded by default", () => {
+  const watchlist = Array.from({ length: 12 }, (_, index) => ({
+    signalTicker: `PERF${String(index + 1).padStart(2, "0")}`,
+    executionTicker: `3PERF${String(index + 1).padStart(2, "0")}.L`,
+    enabled: true,
+    allocationWeight: 1,
+  }));
+  const html = renderPerformance(
+    snapshot({
+      strategies: [
+        strategy("daily-supertrend", {
+          parameters: { watchlist },
+          virtualPositions: [],
+          events: [],
+        }),
+        strategy("nasdaq-sma200-3x"),
+      ],
+    }),
+  );
+  const tableHtml = html.slice(
+    html.indexOf("SuperTrend mapping and virtual state"),
+    html.indexOf("Closed virtual trades"),
+  );
+
+  assert.match(tableHtml, /Showing 10 of 12/);
+  assert.match(tableHtml, /PERF01/);
+  assert.match(tableHtml, /PERF10/);
+  assert.doesNotMatch(tableHtml, /PERF11/);
+  assert.doesNotMatch(tableHtml, /PERF12/);
+});
+
+test("strategy performance closed virtual trades table is bounded by default", () => {
+  const closedVirtualTrades = Array.from({ length: 12 }, (_, index) => ({
+    positionId: `closed-${index + 1}`,
+    executionTicker: `CLOSED${String(index + 1).padStart(2, "0")}.L`,
+    entryTimestamp: "2026-05-01",
+    entryPrice: 10,
+    exitTimestamp: `2026-06-${String(index + 1).padStart(2, "0")}`,
+    exitPrice: 11,
+    pnlValue: 10,
+    pnlPercent: 1,
+    exitReason: "Model exit.",
+  }));
+  const html = renderPerformance(
+    snapshot({
+      strategies: [
+        strategy("daily-supertrend", { closedVirtualTrades }),
+        strategy("nasdaq-sma200-3x"),
+      ],
+    }),
+  );
+
+  assert.match(html, /Showing 10 of 12/);
+  assert.match(html, /CLOSED12\.L/);
+  assert.match(html, /CLOSED03\.L/);
+  assert.doesNotMatch(html, /CLOSED02\.L/);
+  assert.doesNotMatch(html, /CLOSED01\.L/);
 });
 
 test("strategy performance displays model warnings without hiding signal state", () => {

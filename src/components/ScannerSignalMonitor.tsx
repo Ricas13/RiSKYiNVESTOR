@@ -9,6 +9,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import * as React from "react";
+import { useExpandableRows } from "../hooks/useExpandableRows";
 import type { MultiStrategyPublicState } from "../types";
 import {
   buildSignalMonitorModel,
@@ -19,7 +20,7 @@ import {
 } from "../utils/signalMonitorRows";
 import { formatDateTime, formatMoney, formatNumber } from "../utils/format";
 import { collectSnapshotPerformanceWarnings } from "../utils/modelWarnings";
-import { Badge } from "./ui";
+import { Badge, ExpandableRowsControls } from "./ui";
 
 export function ScannerSignalMonitor({
   monitor,
@@ -156,7 +157,17 @@ export function ScannerSignalMonitor({
 }
 
 function SuperTrendSignalTable({ rows }: { rows: SuperTrendSignalRow[] }) {
+  const expandable = useExpandableRows(rows);
   return (
+    <>
+    <ExpandableRowsControls
+      expanded={expandable.expanded}
+      hasOverflow={expandable.hasOverflow}
+      totalRows={expandable.totalRows}
+      visibleCount={expandable.visibleCount}
+      onToggle={() => expandable.setExpanded(!expandable.expanded)}
+      expandLabel="Show all"
+    />
     <div className="table-scroll signal-monitor-table-wrap">
       <table className="data-table signal-monitor-table">
         <thead>
@@ -175,7 +186,7 @@ function SuperTrendSignalTable({ rows }: { rows: SuperTrendSignalRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {expandable.visibleRows.map((row) => (
             <tr key={`${row.signalTicker}-${row.executionTicker}`}>
               <td>
                 <strong>{row.signalTicker || "—"}</strong>
@@ -209,6 +220,7 @@ function SuperTrendSignalTable({ rows }: { rows: SuperTrendSignalRow[] }) {
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
@@ -272,7 +284,17 @@ function Sma200Card({ summary }: { summary: Sma200SignalSummary | null }) {
 }
 
 function Sma200SignalTable({ rows }: { rows: Sma200SignalRow[] }) {
+  const expandable = useExpandableRows(rows);
   return (
+    <>
+    <ExpandableRowsControls
+      expanded={expandable.expanded}
+      hasOverflow={expandable.hasOverflow}
+      totalRows={expandable.totalRows}
+      visibleCount={expandable.visibleCount}
+      onToggle={() => expandable.setExpanded(!expandable.expanded)}
+      expandLabel="Show all"
+    />
     <div className="table-scroll signal-monitor-table-wrap">
       <table className="data-table signal-monitor-table">
         <thead>
@@ -289,7 +311,7 @@ function Sma200SignalTable({ rows }: { rows: Sma200SignalRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {expandable.visibleRows.map((row) => (
             <tr key={`${row.signalTicker}-${row.executionTicker}`}>
               <td>
                 <strong>{row.signalTicker || "—"}</strong>
@@ -316,6 +338,7 @@ function Sma200SignalTable({ rows }: { rows: Sma200SignalRow[] }) {
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 

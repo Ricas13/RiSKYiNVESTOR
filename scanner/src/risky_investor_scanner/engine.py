@@ -16,7 +16,7 @@ def event_id(strategy_id: str, event_type: str, date_text: str, ticker: str) -> 
     return f'{strategy_id}:{hashlib.sha256(material).hexdigest()[:24]}'
 
 def _empty_strategy(strategy_id: str, name: str, enabled: bool, summary: str, parameters: dict[str, Any], configured: bool=True) -> dict[str, Any]:
-    return {'strategyId': strategy_id, 'name': name, 'enabled': enabled, 'configured': configured, 'status': 'disabled' if not enabled else 'awaiting_data', 'ruleSummary': summary, 'parameters': parameters, 'currentState': 'disabled' if not enabled else 'awaiting_data', 'modelValue': None, 'returnPercent': None, 'drawdownPercent': None, 'exposurePercent': 0, 'equitySnapshots': [], 'virtualPositions': [], 'closedVirtualTrades': [], 'events': [], 'latestEvent': None, 'dataFreshness': None, 'warnings': []}
+    return {'strategyId': strategy_id, 'name': name, 'enabled': enabled, 'configured': configured, 'status': 'disabled' if not enabled else 'awaiting_data', 'ruleSummary': summary, 'parameters': parameters, 'currentState': 'disabled' if not enabled else 'awaiting_data', 'modelValue': None, 'returnPercent': None, 'drawdownPercent': None, 'exposurePercent': 0, 'equitySnapshots': [], 'virtualPositions': [], 'closedVirtualTrades': [], 'events': [], 'latestEvent': None, 'dataFreshness': None, 'warnings': [], 'diagnostics': []}
 
 class ScannerEngine:
 
@@ -99,7 +99,7 @@ class ScannerEngine:
         positions = durable.get('positions', [])
         if isinstance(positions, dict):
             positions = list(positions.values())
-        result.update({'status': 'rebuild_required', 'currentState': 'rebuild_required', 'ruleSummary': f"{result['ruleSummary']} {message}", 'modelValue': durable.get('modelValue'), 'returnPercent': durable.get('returnPercent'), 'drawdownPercent': durable.get('drawdownPercent'), 'exposurePercent': durable.get('exposurePercent', 0), 'equitySnapshots': durable.get('equity', []), 'virtualPositions': positions, 'closedVirtualTrades': durable.get('closed', []), 'events': events, 'regimeChangeEvents': durable.get('regimeChangeEvents'), 'latestEvent': events[-1] if events else None, 'dataFreshness': durable.get('dataFreshness'), 'warnings': durable.get('warnings', []), 'rebuildRequired': True})
+        result.update({'status': 'rebuild_required', 'currentState': 'rebuild_required', 'ruleSummary': f"{result['ruleSummary']} {message}", 'modelValue': durable.get('modelValue'), 'returnPercent': durable.get('returnPercent'), 'drawdownPercent': durable.get('drawdownPercent'), 'exposurePercent': durable.get('exposurePercent', 0), 'equitySnapshots': durable.get('equity', []), 'virtualPositions': positions, 'closedVirtualTrades': durable.get('closed', []), 'events': events, 'regimeChangeEvents': durable.get('regimeChangeEvents'), 'latestEvent': events[-1] if events else None, 'dataFreshness': durable.get('dataFreshness'), 'warnings': durable.get('warnings', []), 'diagnostics': durable.get('diagnostics', []), 'rebuildRequired': True})
         for key in ('cash', 'investedValue'):
             if durable.get(key) is not None:
                 result[key] = durable[key]
@@ -125,6 +125,7 @@ class ScannerEngine:
         market_days: set[date] = set()
         freshness: list[str] = []
         quality_warnings: list[dict[str, Any]] = []
+        diagnostics: list[dict[str, Any]] = []
         for row in enabled_rows:
             signal_bars = self._fetch(row.signal_ticker)
             execution_bars = self._fetch(row.execution_ticker)
@@ -159,6 +160,7 @@ class ScannerEngine:
                 market_days.add(point_day)
                 if point.state != previous_state:
                     transitions.setdefault(point_day, []).append({'row': row, 'rowKey': row_key, 'state': point.state, 'previousState': previous_state})
+                    diagnostics.append(_supertrend_diagnostic(row, point, previous_state))
                 previous_state = point.state
         if not row_data or not market_days:
             if freshness:
@@ -215,8 +217,8 @@ class ScannerEngine:
         invested = _refresh_supertrend_positions(positions, row_data, sorted(market_days)[-1])
         model_value = cash + invested
         peak = max((item['value'] for item in equity))
-        durable = {'configFingerprint': fingerprint, 'rebuildRequired': False, 'capital': config.model_starting_capital, 'cash': cash, 'investedValue': invested, 'modelValue': model_value, 'returnPercent': (model_value / config.model_starting_capital - 1) * 100, 'drawdownPercent': (model_value / peak - 1) * 100, 'exposurePercent': invested / max(model_value, 1e-06) * 100, 'positions': positions, 'closed': closed, 'equity': _dedupe_equity(equity), 'events': events, 'dataFreshness': max(freshness) if freshness else None, 'currentState': 'in_market' if positions else 'out_of_market', 'warnings': []}
-        result.update({'status': 'current', 'currentState': durable['currentState'], 'modelValue': durable['modelValue'], 'returnPercent': durable['returnPercent'], 'drawdownPercent': durable['drawdownPercent'], 'exposurePercent': durable['exposurePercent'], 'cash': durable['cash'], 'investedValue': durable['investedValue'], 'equitySnapshots': durable['equity'], 'virtualPositions': list(positions.values()), 'closedVirtualTrades': closed, 'events': events, 'latestEvent': events[-1] if events else None, 'dataFreshness': durable['dataFreshness']})
+        durable = {'configFingerprint': fingerprint, 'rebuildRequired': False, 'capital': config.model_starting_capital, 'cash': cash, 'investedValue': invested, 'modelValue': model_value, 'returnPercent': (model_value / config.model_starting_capital - 1) * 100, 'drawdownPercent': (model_value / peak - 1) * 100, 'exposurePercent': invested / max(model_value, 1e-06) * 100, 'positions': positions, 'closed': closed, 'equity': _dedupe_equity(equity), 'events': events, 'dataFreshness': max(freshness) if freshness else None, 'currentState': 'in_market' if positions else 'out_of_market', 'warnings': [], 'diagnostics': diagnostics[-100:]}
+        result.update({'status': 'current', 'currentState': durable['currentState'], 'modelValue': durable['modelValue'], 'returnPercent': durable['returnPercent'], 'drawdownPercent': durable['drawdownPercent'], 'exposurePercent': durable['exposurePercent'], 'cash': durable['cash'], 'investedValue': durable['investedValue'], 'equitySnapshots': durable['equity'], 'virtualPositions': list(positions.values()), 'closedVirtualTrades': closed, 'events': events, 'latestEvent': events[-1] if events else None, 'dataFreshness': durable['dataFreshness'], 'diagnostics': durable['diagnostics']})
         _apply_performance_warnings(result, self.config.sanity, quality_warnings)
         durable['positions'] = {
             _row_key(
@@ -448,6 +450,24 @@ class ScannerEngine:
 
 def _event(identifier: str, strategy_id: str, event_type: str, occurred_at: str, signal_ticker: str, execution_ticker: str, reason: str) -> dict[str, Any]:
     return {'eventId': identifier, 'strategyId': strategy_id, 'eventType': event_type, 'occurredAt': occurred_at, 'signalTicker': signal_ticker, 'executionTicker': execution_ticker, 'reason': reason}
+
+def _supertrend_diagnostic(row: WatchlistRow, point: Any, previous_state: str) -> dict[str, Any]:
+    return {
+        'signalTicker': row.signal_ticker,
+        'executionTicker': row.execution_ticker,
+        'date': point.date,
+        'previousState': previous_state,
+        'state': point.state,
+        'close': point.close,
+        'currentATR': point.atr,
+        'priorATR': point.prior_atr,
+        'rawMultiplier': point.raw_multiplier,
+        'currentFactor': point.factor,
+        'supertrend': point.value,
+        'direction': point.direction,
+        'flipToGreen': point.flip_to_green,
+        'flipToRed': point.flip_to_red,
+    }
 
 def _dedupe_equity(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_date = {str(item['date']): item for item in values}

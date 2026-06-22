@@ -22,12 +22,13 @@ import type {
   MultiStrategyPublicState,
   StrategyId,
 } from "../types";
+import { useExpandableRows } from "../hooks/useExpandableRows";
 import { formatDateTime, formatMoney, formatNumber } from "../utils/format";
 import {
   affectedTickerText,
   collectStrategyPerformanceWarnings,
 } from "../utils/modelWarnings";
-import { Badge } from "./ui";
+import { Badge, ExpandableRowsControls } from "./ui";
 
 type MonitorTab = "all" | StrategyId;
 
@@ -406,6 +407,7 @@ function ModelWarningBanner({
 }: {
   warnings: ModelPerformanceWarning[];
 }) {
+  const expandable = useExpandableRows(warnings);
   return (
     <div className="strategy-monitor__warning" role="alert">
       <ShieldAlert size={18} />
@@ -416,18 +418,26 @@ function ModelWarningBanner({
           reviewed before relying on them.
         </p>
         <ul>
-          {warnings.slice(0, 5).map((warning, index) => (
+          {expandable.visibleRows.map((warning, index) => (
             <li key={`${warning.code}-${index}`}>
               <span>{affectedTickerText(warning)}:</span> {warning.message}
             </li>
           ))}
         </ul>
+        <ExpandableRowsControls
+          expanded={expandable.expanded}
+          hasOverflow={expandable.hasOverflow}
+          totalRows={expandable.totalRows}
+          visibleCount={expandable.visibleCount}
+          onToggle={() => expandable.setExpanded(!expandable.expanded)}
+        />
       </div>
     </div>
   );
 }
 
 function VirtualPositions({ strategy }: { strategy: MultiStrategyRecord }) {
+  const expandable = useExpandableRows(strategy.virtualPositions);
   return (
     <article className="control-panel">
       <div className="control-panel__heading">
@@ -454,7 +464,7 @@ function VirtualPositions({ strategy }: { strategy: MultiStrategyRecord }) {
               </tr>
             </thead>
             <tbody>
-              {strategy.virtualPositions.map((position) => (
+              {expandable.visibleRows.map((position) => (
                 <tr key={position.positionId}>
                   <td>{position.label}</td>
                   <td>
@@ -478,6 +488,13 @@ function VirtualPositions({ strategy }: { strategy: MultiStrategyRecord }) {
           </table>
         </div>
       )}
+      <ExpandableRowsControls
+        expanded={expandable.expanded}
+        hasOverflow={expandable.hasOverflow}
+        totalRows={expandable.totalRows}
+        visibleCount={expandable.visibleCount}
+        onToggle={() => expandable.setExpanded(!expandable.expanded)}
+      />
     </article>
   );
 }
@@ -493,6 +510,7 @@ function SuperTrendWatchlist({
           Boolean(value) && typeof value === "object" && !Array.isArray(value),
       )
     : [];
+  const expandable = useExpandableRows(rows);
   return (
     <article className="control-panel">
       <div className="control-panel__heading">
@@ -520,7 +538,7 @@ function SuperTrendWatchlist({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, index) => {
+              {expandable.visibleRows.map((row, index) => {
                 const signalTicker = String(row.signalTicker ?? "");
                 const executionTicker = String(row.executionTicker ?? "");
                 const position = strategy.virtualPositions.find(
@@ -569,6 +587,14 @@ function SuperTrendWatchlist({
           </table>
         </div>
       )}
+      <ExpandableRowsControls
+        expanded={expandable.expanded}
+        hasOverflow={expandable.hasOverflow}
+        totalRows={expandable.totalRows}
+        visibleCount={expandable.visibleCount}
+        onToggle={() => expandable.setExpanded(!expandable.expanded)}
+        expandLabel="Show all"
+      />
     </article>
   );
 }
@@ -592,6 +618,7 @@ function Sma200Watchlist({ strategy }: { strategy: MultiStrategyRecord }) {
             enabled: strategy.enabled,
           },
         ].filter((row) => row.signalTicker || row.executionTicker);
+  const expandable = useExpandableRows(fallbackRows);
   return (
     <article className="control-panel">
       <div className="control-panel__heading">
@@ -619,7 +646,7 @@ function Sma200Watchlist({ strategy }: { strategy: MultiStrategyRecord }) {
               </tr>
             </thead>
             <tbody>
-              {fallbackRows.map((row, index) => {
+              {expandable.visibleRows.map((row, index) => {
                 const signalTicker = String(row.signalTicker ?? "");
                 const executionTicker = String(row.executionTicker ?? "");
                 const position = strategy.virtualPositions.find(
@@ -668,42 +695,23 @@ function Sma200Watchlist({ strategy }: { strategy: MultiStrategyRecord }) {
           </table>
         </div>
       )}
+      <ExpandableRowsControls
+        expanded={expandable.expanded}
+        hasOverflow={expandable.hasOverflow}
+        totalRows={expandable.totalRows}
+        visibleCount={expandable.visibleCount}
+        onToggle={() => expandable.setExpanded(!expandable.expanded)}
+        expandLabel="Show all"
+      />
     </article>
   );
 }
 
 function RegimeHistory({ strategy }: { strategy: MultiStrategyRecord }) {
-  const [expanded, setExpanded] = useState(false);
   const allEvents = [...(strategy.regimeChangeEvents ?? strategy.events)].sort(
     (a, b) => b.occurredAt.localeCompare(a.occurredAt),
   );
-  const events = allEvents.slice(0, 20);
-  if (allEvents.length > 0 && !expanded) {
-    return (
-      <article className="control-panel">
-        <div className="control-panel__heading">
-          <div>
-            <span>Regime-change history</span>
-            <h3>Nasdaq SMA state transitions</h3>
-          </div>
-          <Badge tone="blue">{allEvents.length}</Badge>
-        </div>
-        <div className="collapsed-history-note">
-          <p className="settings-note">
-            Regime-change history is collapsed by default. Latest event:{" "}
-            {formatDateTime(allEvents[0].occurredAt)}.
-          </p>
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={() => setExpanded(true)}
-          >
-            Show latest 20 regime events
-          </button>
-        </div>
-      </article>
-    );
-  }
+  const expandable = useExpandableRows(allEvents);
   return (
     <article className="control-panel">
       <div className="control-panel__heading">
@@ -711,11 +719,20 @@ function RegimeHistory({ strategy }: { strategy: MultiStrategyRecord }) {
           <span>Regime-change history</span>
           <h3>Nasdaq SMA state transitions</h3>
         </div>
-        <Badge tone="blue">{events.length}</Badge>
+        <Badge tone="blue">{allEvents.length}</Badge>
       </div>
-      {events.length === 0 ? (
+      {allEvents.length === 0 ? (
         <p className="settings-note">No regime change has been recorded.</p>
       ) : (
+        <>
+        <ExpandableRowsControls
+          expanded={expandable.expanded}
+          hasOverflow={expandable.hasOverflow}
+          totalRows={expandable.totalRows}
+          visibleCount={expandable.visibleCount}
+          onToggle={() => expandable.setExpanded(!expandable.expanded)}
+          expandLabel="Show all"
+        />
         <div className="table-scroll">
           <table className="data-table">
             <thead>
@@ -727,7 +744,7 @@ function RegimeHistory({ strategy }: { strategy: MultiStrategyRecord }) {
               </tr>
             </thead>
             <tbody>
-              {events.map((event) => (
+              {expandable.visibleRows.map((event) => (
                 <tr key={event.eventId}>
                   <td>{formatDateTime(event.occurredAt)}</td>
                   <td>{event.eventType === "entry" ? "Risk on" : "Risk off"}</td>
@@ -740,6 +757,7 @@ function RegimeHistory({ strategy }: { strategy: MultiStrategyRecord }) {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </article>
   );
@@ -750,37 +768,10 @@ function ClosedVirtualTrades({
 }: {
   strategy: MultiStrategyRecord;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const allTrades = [...strategy.closedVirtualTrades].sort((a, b) =>
     String(b.exitTimestamp ?? "").localeCompare(String(a.exitTimestamp ?? "")),
   );
-  const trades = allTrades.slice(0, 20);
-  if (allTrades.length > 0 && !expanded) {
-    return (
-      <article className="control-panel">
-        <div className="control-panel__heading">
-          <div>
-            <span>Closed virtual trades</span>
-            <h3>Model-only completed positions</h3>
-          </div>
-          <Badge tone="blue">{allTrades.length}</Badge>
-        </div>
-        <div className="collapsed-history-note">
-          <p className="settings-note">
-            Closed virtual trades are model-only scanner history and are
-            collapsed by default.
-          </p>
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={() => setExpanded(true)}
-          >
-            Show latest 20 closed trades
-          </button>
-        </div>
-      </article>
-    );
-  }
+  const expandable = useExpandableRows(allTrades);
   return (
     <article className="control-panel">
       <div className="control-panel__heading">
@@ -788,11 +779,20 @@ function ClosedVirtualTrades({
           <span>Closed virtual trades</span>
           <h3>Model-only completed positions</h3>
         </div>
-        <Badge tone="blue">{trades.length}</Badge>
+        <Badge tone="blue">{allTrades.length}</Badge>
       </div>
-      {trades.length === 0 ? (
+      {allTrades.length === 0 ? (
         <p className="settings-note">No virtual model trade has closed yet.</p>
       ) : (
+        <>
+        <ExpandableRowsControls
+          expanded={expandable.expanded}
+          hasOverflow={expandable.hasOverflow}
+          totalRows={expandable.totalRows}
+          visibleCount={expandable.visibleCount}
+          onToggle={() => expandable.setExpanded(!expandable.expanded)}
+          expandLabel="Show all"
+        />
         <div className="table-scroll">
           <table className="data-table">
             <thead>
@@ -806,7 +806,7 @@ function ClosedVirtualTrades({
               </tr>
             </thead>
             <tbody>
-              {trades.map((trade, index) => (
+              {expandable.visibleRows.map((trade, index) => (
                 <tr key={String(trade.positionId ?? index)}>
                   <td>Virtual model position</td>
                   <td>{String(trade.executionTicker ?? "—")}</td>
@@ -828,6 +828,7 @@ function ClosedVirtualTrades({
             </tbody>
           </table>
         </div>
+        </>
       )}
     </article>
   );

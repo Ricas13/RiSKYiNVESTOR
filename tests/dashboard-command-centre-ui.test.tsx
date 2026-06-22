@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DashboardCommandCentre } from "../src/components/DashboardCommandCentre";
+import { NotificationHistory } from "../src/components/SignalEvents";
 import type {
   DashboardData,
   ManualTrade,
   MultiStrategyRecord,
   MultiStrategySnapshot,
+  NotificationDelivery,
   SignalEvent,
 } from "../src/types";
 import { buildActualTradeEquityModel } from "../src/utils/actualTradeEquity";
@@ -378,6 +381,25 @@ function render(data: DashboardData) {
   return renderToStaticMarkup(createElement(DashboardCommandCentre, { data }));
 }
 
+function delivery(index: number): NotificationDelivery {
+  return {
+    deliveryId: `delivery-${index}`,
+    eventId: null,
+    notificationKey: `delivery-key-${index}`,
+    destinationId: null,
+    destinationLabel: null,
+    channel: "discord",
+    status: "sent",
+    attemptedAt: `2026-06-20T09:${String(index).padStart(2, "0")}:00.000Z`,
+    deliveredAt: null,
+    errorMessage: null,
+    providerReference: null,
+    retryCount: 0,
+    category: "test",
+    message: `Delivery attempt ${index}`,
+  };
+}
+
 function actualTradePanelHtml(html: string) {
   const start = html.indexOf("actual-trade-equity-panel");
   const end = html.indexOf("</section>", start);
@@ -460,6 +482,68 @@ test("dashboard shows bounded recent signal history", () => {
   assert.match(historyHtml, /Recent dashboard history 2/);
   assert.doesNotMatch(historyHtml, /Recent dashboard history 1/);
   assert.doesNotMatch(historyHtml, /Recent dashboard history 0/);
+});
+
+test("Alerts history is bounded by default", () => {
+  const source = readFileSync(
+    new URL("../src/components/TradingControlPages.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /useExpandableRows\(sorted, \{ expandedLimit: 50 \}\)/);
+  assert.match(source, /events=\{expandable\.visibleRows\}/);
+  assert.match(source, /alerts-date-groups/);
+});
+
+test("Signal Monitor audit trail is bounded by default", () => {
+  const source = readFileSync(
+    new URL("../src/components/TradingControlPages.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /function SignalAuditTrail/);
+  assert.match(source, /useExpandableRows\(filtered, \{ expandedLimit: 50 \}\)/);
+  assert.match(source, /events=\{expandable\.visibleRows\}/);
+  assert.match(source, /Scanner event audit trail/);
+});
+
+test("notification delivery attempts are bounded by default", () => {
+  const deliveries = Array.from({ length: 12 }, (_, index) =>
+    delivery(index + 1),
+  );
+  const html = renderToStaticMarkup(
+    createElement(NotificationHistory, { deliveries }),
+  );
+
+  assert.match(html, /Showing 10 of 12/);
+  assert.match(html, /Delivery attempt 1/);
+  assert.match(html, /Delivery attempt 10/);
+  assert.doesNotMatch(html, /Delivery attempt 11/);
+  assert.doesNotMatch(html, /Delivery attempt 12/);
+});
+
+test("Settings notification help text is present and webhook secrets stay hidden", () => {
+  const settingsSource = readFileSync(
+    new URL("../src/components/SettingsPage.tsx", import.meta.url),
+    "utf8",
+  );
+  const destinationsSource = readFileSync(
+    new URL("../src/components/DiscordDestinations.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    destinationsSource,
+    /Destinations are the Discord or webhook channels/,
+  );
+  assert.match(destinationsSource, /Webhook secrets are stored privately/);
+  assert.match(settingsSource, /Routes decide which type of alert/);
+  assert.match(settingsSource, /Sends a daily overview of scanner status/);
+  assert.match(settingsSource, /Sends SuperTrend BUY\/SELL signal changes/);
+  assert.match(settingsSource, /Sends scanner failures, market data problems/);
+  assert.match(settingsSource, /leveraged ETP history, currency units/);
+  assert.match(settingsSource, /This does not place broker orders/);
+  assert.doesNotMatch(destinationsSource, /discord\.com\/api\/webhooks\/\d+/);
 });
 
 test("action-needed section excludes old scannerError events when scanner is healthy", () => {
