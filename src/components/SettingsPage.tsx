@@ -18,6 +18,7 @@ import type {
   DataCleanupPreview,
   DataClassification,
   DataStatusReport,
+  NotificationRouteCategory,
   NotificationPublicState,
   NotificationSettings,
   StrategyConfiguration as StrategyConfigurationValue,
@@ -137,6 +138,19 @@ export function SettingsPage({
           notifications.providers.discord.legacyDestination
         }
         mutate={mutate}
+      />
+
+      <NotificationRoutingMatrix
+        routes={settings.routes}
+        destinations={notifications.providers.discord.destinations}
+        busy={busy}
+        onChange={(routes) => set("routes", routes)}
+        onTest={(destinationId) =>
+          run(
+            () => mutate(`/discord-destinations/${destinationId}/test`, "POST"),
+            "Route test sent.",
+          )
+        }
       />
 
       <StrategyNotificationPolicies
@@ -539,6 +553,197 @@ export function SettingsPage({
       />
       <DataPortability download={download} mutate={mutate} />
     </div>
+  );
+}
+
+const notificationRouteRows: Array<{
+  key: NotificationRouteCategory;
+  label: string;
+  helper: string;
+  severity: boolean;
+}> = [
+  {
+    key: "dailySummary",
+    label: "Daily summary",
+    helper: "Send daily summary to",
+    severity: false,
+  },
+  {
+    key: "supertrendSignals",
+    label: "SuperTrend entry/exit alerts",
+    helper: "Send strategy entries/exits to",
+    severity: false,
+  },
+  {
+    key: "sma200Signals",
+    label: "SMA200 entry/exit alerts",
+    helper: "Send SMA200 entries/exits to",
+    severity: false,
+  },
+  {
+    key: "scannerErrors",
+    label: "Scanner errors",
+    helper: "Send scanner errors to",
+    severity: true,
+  },
+  {
+    key: "modelWarnings",
+    label: "Model performance warnings",
+    helper: "Send model performance warnings to",
+    severity: true,
+  },
+  {
+    key: "deliveryFailures",
+    label: "Delivery failures",
+    helper: "Send delivery failures to",
+    severity: true,
+  },
+  {
+    key: "manualTrades",
+    label: "Manual trade journal events",
+    helper: "Send manual trade journal events to",
+    severity: false,
+  },
+];
+
+function NotificationRoutingMatrix({
+  routes,
+  destinations,
+  busy,
+  onChange,
+  onTest,
+}: {
+  routes: NotificationSettings["routes"];
+  destinations: NotificationPublicState["providers"]["discord"]["destinations"];
+  busy: boolean;
+  onChange: (routes: NotificationSettings["routes"]) => void;
+  onTest: (destinationId: string) => Promise<void>;
+}) {
+  function update(
+    key: NotificationRouteCategory,
+    value: Partial<NotificationSettings["routes"][NotificationRouteCategory]>,
+  ) {
+    onChange({
+      ...routes,
+      [key]: {
+        ...routes[key],
+        ...value,
+      },
+    });
+  }
+
+  return (
+    <section className="settings-card notification-routing">
+      <div className="settings-card__heading">
+        <BellRing size={20} />
+        <div>
+          <h2>Notification routing</h2>
+          <p>
+            Routes control where each type of alert is sent. Webhook secrets are
+            stored privately and are not displayed after saving.
+          </p>
+        </div>
+        <Badge tone="blue">ROUTES</Badge>
+      </div>
+      <div className="table-scroll">
+        <table className="strategy-policy__table notification-routing__table">
+          <thead>
+            <tr>
+              <th>Route category</th>
+              <th>Enabled</th>
+              <th>Destination</th>
+              <th>Minimum severity</th>
+              <th>Test</th>
+            </tr>
+          </thead>
+          <tbody>
+            {notificationRouteRows.map((row) => {
+              const route = routes[row.key];
+              return (
+                <tr key={row.key}>
+                  <th scope="row">
+                    {row.label}
+                    <small>{row.helper}</small>
+                  </th>
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`${row.label} route enabled`}
+                      checked={route.enabled}
+                      onChange={(event) =>
+                        update(row.key, { enabled: event.target.checked })
+                      }
+                    />
+                  </td>
+                  <td>
+                    <select
+                      aria-label={`${row.label} destination`}
+                      value={route.destinationId ?? ""}
+                      onChange={(event) =>
+                        update(row.key, {
+                          destinationId: event.target.value || null,
+                        })
+                      }
+                    >
+                      <option value="">Fallback/default destination</option>
+                      {destinations.map((destination) => (
+                        <option
+                          key={destination.destinationId}
+                          value={destination.destinationId}
+                        >
+                          {destination.label}
+                          {destination.enabled ? "" : " (disabled)"}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    {row.severity ? (
+                      <select
+                        aria-label={`${row.label} minimum severity`}
+                        value={route.minimumSeverity}
+                        onChange={(event) =>
+                          update(row.key, {
+                            minimumSeverity: event.target.value as
+                              | "warning"
+                              | "error"
+                              | "critical",
+                          })
+                        }
+                      >
+                        <option value="warning">Warning</option>
+                        <option value="error">Error</option>
+                        <option value="critical">Critical</option>
+                      </select>
+                    ) : (
+                      <span className="settings-note">Not applicable</span>
+                    )}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      disabled={busy || !route.destinationId}
+                      onClick={() =>
+                        route.destinationId
+                          ? void onTest(route.destinationId)
+                          : undefined
+                      }
+                    >
+                      <Send size={15} /> Test route
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="settings-note">
+        If no route destination is selected, delivery falls back to the existing
+        default destination/subscription behaviour when enabled.
+      </p>
+    </section>
   );
 }
 

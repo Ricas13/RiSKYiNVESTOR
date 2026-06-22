@@ -45,6 +45,7 @@ export interface NotificationSettings {
     "daily-supertrend": StrategyNotificationPolicy;
     "nasdaq-sma200-3x": StrategyNotificationPolicy;
   };
+  routes: NotificationRouteSettings;
   dailySummary: {
     enabled: boolean;
     time: string;
@@ -87,6 +88,26 @@ export interface NotificationSettings {
     maximumDeliveries: number;
   };
 }
+
+export type NotificationRouteCategory =
+  | "dailySummary"
+  | "supertrendSignals"
+  | "sma200Signals"
+  | "scannerErrors"
+  | "modelWarnings"
+  | "deliveryFailures"
+  | "manualTrades";
+
+export interface NotificationRoute {
+  enabled: boolean;
+  destinationId: string | null;
+  minimumSeverity: "warning" | "error" | "critical";
+}
+
+export type NotificationRouteSettings = Record<
+  NotificationRouteCategory,
+  NotificationRoute
+>;
 
 export interface StrategyNotificationPolicy {
   entry: string[];
@@ -272,6 +293,42 @@ function cleanStrategyPolicy(
   };
 }
 
+function emptyRoute(): NotificationRoute {
+  return {
+    enabled: false,
+    destinationId: null,
+    minimumSeverity: "warning",
+  };
+}
+
+function cleanRoute(value: Partial<NotificationRoute> | undefined) {
+  const severity = value?.minimumSeverity;
+  return {
+    enabled: value?.enabled === true,
+    destinationId:
+      typeof value?.destinationId === "string" &&
+      value.destinationId.trim()
+        ? value.destinationId.trim().slice(0, 200)
+        : null,
+    minimumSeverity:
+      severity === "error" || severity === "critical" ? severity : "warning",
+  } satisfies NotificationRoute;
+}
+
+function cleanRoutes(
+  value: Partial<NotificationRouteSettings> | undefined,
+): NotificationRouteSettings {
+  return {
+    dailySummary: cleanRoute(value?.dailySummary ?? emptyRoute()),
+    supertrendSignals: cleanRoute(value?.supertrendSignals ?? emptyRoute()),
+    sma200Signals: cleanRoute(value?.sma200Signals ?? emptyRoute()),
+    scannerErrors: cleanRoute(value?.scannerErrors ?? emptyRoute()),
+    modelWarnings: cleanRoute(value?.modelWarnings ?? emptyRoute()),
+    deliveryFailures: cleanRoute(value?.deliveryFailures ?? emptyRoute()),
+    manualTrades: cleanRoute(value?.manualTrades ?? emptyRoute()),
+  };
+}
+
 function strategyPolicyKey(event: SignalEvent): keyof StrategyNotificationPolicy {
   if (event.signalState === "actionable_entry") return "entry";
   if (event.signalState === "actionable_exit") return "exit";
@@ -280,6 +337,27 @@ function strategyPolicyKey(event: SignalEvent): keyof StrategyNotificationPolicy
   if (event.reasonCode === "strategy_daily_summary") return "dailySummary";
   if (event.reasonCode === "strategy_weekly_summary") return "weeklySummary";
   return "stateUpdate";
+}
+
+function routeCategoryForSignal(
+  event: SignalEvent,
+): NotificationRouteCategory | null {
+  if (event.signalState === "scanner_error") return "scannerErrors";
+  if (
+    event.strategyId === "daily-supertrend" &&
+    (event.signalState === "actionable_entry" ||
+      event.signalState === "actionable_exit")
+  ) {
+    return "supertrendSignals";
+  }
+  if (
+    event.strategyId === "nasdaq-sma200-3x" &&
+    (event.signalState === "actionable_entry" ||
+      event.signalState === "actionable_exit")
+  ) {
+    return "sma200Signals";
+  }
+  return null;
 }
 
 function money(value: number | null) {
@@ -329,6 +407,7 @@ function normaliseSettings(value: Partial<NotificationSettings>) {
         value.strategyPolicies?.["nasdaq-sma200-3x"],
       ),
     },
+    routes: cleanRoutes(value.routes),
     dailySummary: {
       enabled: Boolean(value.dailySummary?.enabled),
       time: /^\d{2}:\d{2}$/.test(value.dailySummary?.time ?? "")
@@ -531,6 +610,38 @@ export class NotificationDispatcher {
           ...value.strategyPolicies?.["nasdaq-sma200-3x"],
         },
       },
+      routes: {
+        ...current.routes,
+        ...value.routes,
+        dailySummary: {
+          ...current.routes.dailySummary,
+          ...value.routes?.dailySummary,
+        },
+        supertrendSignals: {
+          ...current.routes.supertrendSignals,
+          ...value.routes?.supertrendSignals,
+        },
+        sma200Signals: {
+          ...current.routes.sma200Signals,
+          ...value.routes?.sma200Signals,
+        },
+        scannerErrors: {
+          ...current.routes.scannerErrors,
+          ...value.routes?.scannerErrors,
+        },
+        modelWarnings: {
+          ...current.routes.modelWarnings,
+          ...value.routes?.modelWarnings,
+        },
+        deliveryFailures: {
+          ...current.routes.deliveryFailures,
+          ...value.routes?.deliveryFailures,
+        },
+        manualTrades: {
+          ...current.routes.manualTrades,
+          ...value.routes?.manualTrades,
+        },
+      },
       dailySummary: {
         ...current.dailySummary,
         ...value.dailySummary,
@@ -559,6 +670,54 @@ export class NotificationDispatcher {
     await this.store.write("notification_settings.json", settings);
     await this.deliveries.prune(settings.retention.maximumDeliveries);
     return settings;
+  }
+
+  private async routeTargets(
+    settings: NotificationSettings,
+    routeCategory: NotificationRouteCategory | null,
+    fallbackCategory: DiscordNotificationCategory | null,
+    allowedDestinationIds?: ReadonlySet<string>,
+  ): Promise<{
+    targets: DiscordDeliveryTarget[];
+    disabledReason: string | null;
+    configuredRoute: boolean;
+  }> {
+    const route = routeCategory ? settings.routes[routeCategory] : null;
+    if (route?.destinationId) {
+      if (!route.enabled) {
+        return {
+          targets: [],
+          disabledReason: "Notification route is disabled.",
+          configuredRoute: true,
+        };
+      }
+      const publicDestinations = await this.destinations.publicDestinations();
+      const destination = publicDestinations.find(
+        (item) => item.destinationId === route.destinationId,
+      );
+      if (!destination?.enabled) {
+        return {
+          targets: [],
+          disabledReason:
+            "Selected notification route destination is not enabled.",
+          configuredRoute: true,
+        };
+      }
+      return {
+        targets: [await this.destinations.target(route.destinationId)],
+        disabledReason: null,
+        configuredRoute: true,
+      };
+    }
+    return {
+      targets: await this.destinations.deliveryTargets(
+        fallbackCategory,
+        settings.migration.legacyServerDiscordAlongsideManaged,
+        allowedDestinationIds,
+      ),
+      disabledReason: null,
+      configuredRoute: false,
+    };
   }
 
   async dispatchSignal(event: SignalEvent, force = false) {
@@ -611,42 +770,55 @@ export class NotificationDispatcher {
     }
     const destinationCategory = destinationCategoryFor(event.signalState);
     if (!destinationCategory) return null;
+    const routeCategory = routeCategoryForSignal(event);
+    const configuredRoute = routeCategory
+      ? settings.routes[routeCategory]
+      : null;
     const strategyPolicy =
-      event.strategyId === "daily-supertrend" ||
-      event.strategyId === "nasdaq-sma200-3x"
+      !configuredRoute?.destinationId &&
+      (event.strategyId === "daily-supertrend" ||
+        event.strategyId === "nasdaq-sma200-3x")
         ? settings.strategyPolicies[event.strategyId]
         : null;
-    const allowedDestinationIds = strategyPolicy
-      ? new Set(strategyPolicy[strategyPolicyKey(event)])
+    const policyDestinationIds = strategyPolicy?.[strategyPolicyKey(event)] ?? [];
+    const allowedDestinationIds = policyDestinationIds.length
+      ? new Set(policyDestinationIds)
       : undefined;
-    if (allowedDestinationIds && allowedDestinationIds.size === 0) {
+    const routeResult = await this.routeTargets(
+      settings,
+      routeCategory,
+      destinationCategory,
+      allowedDestinationIds,
+    );
+    if (routeResult.disabledReason) {
       return this.recordFinal({
-        notificationKey: `discord:signal:${event.eventId}:strategy-muted`,
+        notificationKey: `discord:signal:${event.eventId}:route-disabled`,
         eventId: event.eventId,
         channel: "discord",
         category: "signal",
-        status: "skipped",
+        status: "disabled",
         message,
-        errorMessage:
-          "Strategy policy keeps this event in website history only.",
+        errorMessage: routeResult.disabledReason,
         retryCount: 0,
       });
     }
-    const targets = await this.destinations.deliveryTargets(
-      destinationCategory,
-      settings.migration.legacyServerDiscordAlongsideManaged,
-      allowedDestinationIds,
-    );
+    const targets = routeResult.targets;
     if (!targets.length) {
       return this.recordFinal({
-        notificationKey: `discord:signal:${event.eventId}:no-subscribed-destination`,
+        notificationKey: `discord:signal:${event.eventId}:${
+          routeResult.configuredRoute
+            ? "route-unavailable"
+            : "no-subscribed-destination"
+        }`,
         eventId: event.eventId,
         channel: "discord",
         category: "signal",
         status: "skipped",
         message,
         errorMessage:
-          "No enabled Discord destination is subscribed to this notification category.",
+          routeResult.configuredRoute
+            ? "Configured notification route has no enabled destination."
+            : "No enabled Discord destination is subscribed to this notification category.",
         retryCount: 0,
       });
     }
@@ -933,20 +1105,46 @@ export class NotificationDispatcher {
       };
     }
 
-    const targets = await this.destinations.deliveryTargets(
+    const routeResult = await this.routeTargets(
+      settings,
       "dailySummary",
-      settings.migration.legacyServerDiscordAlongsideManaged,
+      "dailySummary",
     );
+    if (routeResult.disabledReason) {
+      const delivery = await this.recordFinal({
+        notificationKey: `${baseNotificationKey}:route-disabled`,
+        eventId: snapshot!.snapshotId,
+        channel: "daily_summary",
+        category: "daily_summary",
+        status: "disabled",
+        message: rendered.message,
+        errorMessage: routeResult.disabledReason,
+        retryCount: 0,
+      });
+      return {
+        status: delivery.status,
+        preview: rendered.message,
+        reason: delivery.errorMessage,
+        delivery,
+      };
+    }
+    const targets = routeResult.targets;
     if (!targets.length) {
       const delivery = await this.recordFinal({
-        notificationKey: `${baseNotificationKey}:no-subscribed-destination`,
+        notificationKey: `${baseNotificationKey}:${
+          routeResult.configuredRoute
+            ? "route-unavailable"
+            : "no-subscribed-destination"
+        }`,
         eventId: snapshot!.snapshotId,
         channel: "daily_summary",
         category: "daily_summary",
         status: "skipped",
         message: rendered.message,
         errorMessage:
-          "No enabled Discord destination is subscribed to daily summaries.",
+          routeResult.configuredRoute
+            ? "Configured daily summary route has no enabled destination."
+            : "No enabled Discord destination is subscribed to daily summaries.",
         retryCount: 0,
       });
       return {

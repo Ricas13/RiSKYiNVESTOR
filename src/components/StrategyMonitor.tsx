@@ -273,6 +273,8 @@ function StrategySection({ strategy }: { strategy: MultiStrategyRecord }) {
         />
       </div>
 
+      <VirtualPositions strategy={strategy} />
+
       <div className="strategy-monitor__grid">
         <article className="control-panel">
           <div className="control-panel__heading">
@@ -362,7 +364,6 @@ function StrategySection({ strategy }: { strategy: MultiStrategyRecord }) {
         </article>
       </div>
 
-      <VirtualPositions strategy={strategy} />
       {strategy.strategyId === "daily-supertrend" ? (
         <SuperTrendWatchlist strategy={strategy} />
       ) : (
@@ -672,7 +673,37 @@ function Sma200Watchlist({ strategy }: { strategy: MultiStrategyRecord }) {
 }
 
 function RegimeHistory({ strategy }: { strategy: MultiStrategyRecord }) {
-  const events = strategy.regimeChangeEvents ?? strategy.events;
+  const [expanded, setExpanded] = useState(false);
+  const allEvents = [...(strategy.regimeChangeEvents ?? strategy.events)].sort(
+    (a, b) => b.occurredAt.localeCompare(a.occurredAt),
+  );
+  const events = allEvents.slice(0, 20);
+  if (allEvents.length > 0 && !expanded) {
+    return (
+      <article className="control-panel">
+        <div className="control-panel__heading">
+          <div>
+            <span>Regime-change history</span>
+            <h3>Nasdaq SMA state transitions</h3>
+          </div>
+          <Badge tone="blue">{allEvents.length}</Badge>
+        </div>
+        <div className="collapsed-history-note">
+          <p className="settings-note">
+            Regime-change history is collapsed by default. Latest event:{" "}
+            {formatDateTime(allEvents[0].occurredAt)}.
+          </p>
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() => setExpanded(true)}
+          >
+            Show latest 20 regime events
+          </button>
+        </div>
+      </article>
+    );
+  }
   return (
     <article className="control-panel">
       <div className="control-panel__heading">
@@ -719,7 +750,37 @@ function ClosedVirtualTrades({
 }: {
   strategy: MultiStrategyRecord;
 }) {
-  const trades = strategy.closedVirtualTrades;
+  const [expanded, setExpanded] = useState(false);
+  const allTrades = [...strategy.closedVirtualTrades].sort((a, b) =>
+    String(b.exitTimestamp ?? "").localeCompare(String(a.exitTimestamp ?? "")),
+  );
+  const trades = allTrades.slice(0, 20);
+  if (allTrades.length > 0 && !expanded) {
+    return (
+      <article className="control-panel">
+        <div className="control-panel__heading">
+          <div>
+            <span>Closed virtual trades</span>
+            <h3>Model-only completed positions</h3>
+          </div>
+          <Badge tone="blue">{allTrades.length}</Badge>
+        </div>
+        <div className="collapsed-history-note">
+          <p className="settings-note">
+            Closed virtual trades are model-only scanner history and are
+            collapsed by default.
+          </p>
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() => setExpanded(true)}
+          >
+            Show latest 20 closed trades
+          </button>
+        </div>
+      </article>
+    );
+  }
   return (
     <article className="control-panel">
       <div className="control-panel__heading">

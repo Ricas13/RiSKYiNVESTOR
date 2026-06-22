@@ -62,6 +62,43 @@ export const disabledNotificationSettings: NotificationSettings = {
       scannerError: [],
     },
   },
+  routes: {
+    dailySummary: {
+      enabled: false,
+      destinationId: null,
+      minimumSeverity: "warning",
+    },
+    supertrendSignals: {
+      enabled: false,
+      destinationId: null,
+      minimumSeverity: "warning",
+    },
+    sma200Signals: {
+      enabled: false,
+      destinationId: null,
+      minimumSeverity: "warning",
+    },
+    scannerErrors: {
+      enabled: false,
+      destinationId: null,
+      minimumSeverity: "error",
+    },
+    modelWarnings: {
+      enabled: false,
+      destinationId: null,
+      minimumSeverity: "warning",
+    },
+    deliveryFailures: {
+      enabled: false,
+      destinationId: null,
+      minimumSeverity: "error",
+    },
+    manualTrades: {
+      enabled: false,
+      destinationId: null,
+      minimumSeverity: "warning",
+    },
+  },
   dailySummary: {
     enabled: false,
     time: "21:15",

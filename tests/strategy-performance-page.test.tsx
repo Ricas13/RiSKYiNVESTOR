@@ -218,13 +218,14 @@ test("strategy performance shows SMA200 model stats and current regime", () => {
   assert.match(html, /£10,750/);
 });
 
-test("strategy performance renders equity snapshot chart section and closed virtual trades", () => {
+test("strategy performance renders equity chart and collapses closed virtual trades", () => {
   const html = renderPerformance();
 
   assert.match(html, /Independent equity curve/);
   assert.match(html, /strategy-monitor__chart/);
   assert.match(html, /Closed virtual trades/);
-  assert.match(html, /3SMH\.L/);
+  assert.match(html, /Show latest 20 closed trades/);
+  assert.doesNotMatch(html, /3SMH\.L/);
   assert.match(html, /QQQ3\.L/);
 });
 
