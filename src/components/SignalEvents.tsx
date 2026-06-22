@@ -15,9 +15,10 @@ import type {
   SignalEvent,
   SignalState,
 } from "../types";
+import { useExpandableRows } from "../hooks/useExpandableRows";
 import { formatDateTime } from "../utils/format";
 import type { SignalEventAlertMeta } from "../utils/signalEventAlerts";
-import { Badge } from "./ui";
+import { Badge, ExpandableRowsControls } from "./ui";
 
 function eventTone(type: SignalState) {
   if (type === "actionable_entry") return "green" as const;
@@ -299,8 +300,10 @@ export function NotificationHistory({
   onRetry?: (deliveryId: string) => void;
   onResend?: (deliveryId: string) => void;
 }) {
-  const visible = deliveries.slice(0, limit);
-  if (!visible.length) {
+  const expandable = useExpandableRows(deliveries, {
+    expandedLimit: limit ?? 50,
+  });
+  if (!deliveries.length) {
     return (
       <div className="empty-state">
         No notification delivery attempts have been recorded.
@@ -308,8 +311,16 @@ export function NotificationHistory({
     );
   }
   return (
+    <>
+    <ExpandableRowsControls
+      expanded={expandable.expanded}
+      hasOverflow={expandable.hasOverflow}
+      totalRows={expandable.totalRows}
+      visibleCount={expandable.visibleCount}
+      onToggle={() => expandable.setExpanded(!expandable.expanded)}
+    />
     <div className="delivery-list">
-      {visible.map((delivery) => (
+      {expandable.visibleRows.map((delivery) => (
         <article key={delivery.deliveryId}>
           <Bell size={16} />
           <div>
@@ -364,5 +375,6 @@ export function NotificationHistory({
         </article>
       ))}
     </div>
+    </>
   );
 }

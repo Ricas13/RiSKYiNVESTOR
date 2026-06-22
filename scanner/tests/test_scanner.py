@@ -330,6 +330,120 @@ def test_tradingview_supertrend_direction_flips_and_dynamic_factors():
     assert all(point.direction > 0 for point in points if point.state == "out")
 
 
+def test_supertrend_initialises_on_first_valid_atr_bar_like_tradingview():
+    signal_bars = [
+        PriceBar(
+            day=date(2026, 2, 18) + timedelta(days=index),
+            open=close,
+            high=high,
+            low=low,
+            close=close,
+            volume=1_000_000,
+        )
+        for index, (high, low, close) in enumerate(
+            [
+                (100, 98, 99),
+                (101, 99, 100),
+                (102, 100, 101),
+                (103, 101, 102),
+                (104, 102, 103),
+            ]
+        )
+    ]
+    points = supertrend(signal_bars, 3, smoothing="RMA", use_confirmed=False)
+
+    assert points[0].date == "2026-02-20"
+    assert points[0].prior_atr is None
+    assert points[0].raw_multiplier == 1.0
+    assert points[0].factor == 5.0
+    assert points[0].direction == 1
+    assert points[0].state == "out"
+    assert points[1].prior_atr == pytest.approx(points[0].atr)
+
+
+def test_supertrend_transition_diagnostics_include_tradingview_inputs(tmp_path):
+    signal_bars = [
+        PriceBar(
+            day=date(2026, 2, 12) + timedelta(days=index),
+            open=close,
+            high=high,
+            low=low,
+            close=close,
+            volume=1_000_000,
+        )
+        for index, (high, low, close) in enumerate(
+            [
+                (10, 8, 9),
+                (11, 9, 10),
+                (12, 10, 11),
+                (13, 11, 12),
+                (14, 12, 13),
+                (15, 13, 14),
+                (30, 10, 29),
+                (31, 29, 30),
+                (32, 30, 31),
+                (33, 31, 32),
+                (34, 32, 33),
+                (33, 12, 13),
+                (14, 12, 13),
+                (13, 11, 12),
+            ]
+        )
+    ]
+    provider = Provider()
+    provider.values = {
+        "ARM": signal_bars,
+        "3ARM.L": [
+            PriceBar(
+                day=bar.day,
+                open=10,
+                high=11,
+                low=9,
+                close=10 + index,
+                volume=1_000_000,
+            )
+            for index, bar in enumerate(signal_bars)
+        ],
+    }
+    config = validate_config(
+        configuration(
+            super_enabled=True,
+            sma_enabled=False,
+            watchlist=[
+                {
+                    "signalTicker": "ARM",
+                    "executionTicker": "3ARM.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                }
+            ],
+            supertrend_cost=0,
+        )
+    )
+
+    snapshot = ScannerEngine(
+        config,
+        provider,
+        tmp_path / "diagnostic-state",
+        tmp_path / "diagnostic-output",
+    ).scan()
+    diagnostics = strategy(snapshot, "daily-supertrend")["diagnostics"]
+
+    assert diagnostics
+    first = diagnostics[0]
+    assert first["signalTicker"] == "ARM"
+    assert first["executionTicker"] == "3ARM.L"
+    assert first["previousState"] == "out"
+    assert first["state"] == "in"
+    assert first["flipToGreen"] is True
+    assert first["currentATR"] is not None
+    assert first["priorATR"] is not None
+    assert first["rawMultiplier"] in {1.0, 1.5, 3.0, 5.0}
+    assert first["currentFactor"] == pytest.approx(6.0 - first["rawMultiplier"])
+    assert first["supertrend"] is not None
+    assert first["direction"] == -1
+
+
 def test_repeated_scan_has_no_duplicate_events_and_state_survives(tmp_path):
     config = validate_config(configuration())
     first = ScannerEngine(

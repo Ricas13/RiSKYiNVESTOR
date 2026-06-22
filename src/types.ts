@@ -381,6 +381,7 @@ export interface MultiStrategyRecord {
   latestEvent: MultiStrategyEvent | null;
   dataFreshness: string | null;
   warnings?: ModelPerformanceWarning[];
+  diagnostics?: Array<Record<string, unknown>>;
 }
 
 export interface MultiStrategySnapshot {

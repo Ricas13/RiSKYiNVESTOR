@@ -1,5 +1,6 @@
 import { Landmark } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useExpandableRows } from "../hooks/useExpandableRows";
 import type { AuthSession, DashboardData } from "../types";
 import {
   classifySignalEventAlert,
@@ -20,7 +21,7 @@ import { NotificationHistory, SignalEventList } from "./SignalEvents";
 import { SignalComparison } from "./SignalComparison";
 import { SettingsPage } from "./SettingsPage";
 import { StrategyMonitor } from "./StrategyMonitor";
-import { SectionHeader } from "./ui";
+import { ExpandableRowsControls, SectionHeader } from "./ui";
 import { WealthDashboard } from "./WealthDashboard";
 
 export type ControlPage =
@@ -191,17 +192,12 @@ function SignalAuditTrail({
   deliveries: DashboardData["notifications"]["deliveries"];
   onAcknowledge: (event: DashboardData["signalEvents"]["events"][number]) => Promise<void>;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState<AuditTrailFilter>("all");
-  const [limit, setLimit] = useState(20);
   const filtered = useMemo(
-    () => filterAuditTrailEvents(events, filter).slice(0, limit),
-    [events, filter, limit],
-  );
-  const totalForFilter = useMemo(
-    () => filterAuditTrailEvents(events, filter).length,
+    () => filterAuditTrailEvents(events, filter),
     [events, filter],
   );
+  const expandable = useExpandableRows(filtered, { expandedLimit: 50 });
 
   return (
     <section className="control-panel signal-audit-trail">
@@ -218,55 +214,36 @@ function SignalAuditTrail({
           <a className="button button--secondary" href="#/alerts">
             View full history in Alerts
           </a>
-          <button
-            type="button"
-            className="button button--secondary"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((current) => !current)}
-          >
-            {expanded ? "Hide audit trail" : "Show audit trail"}
-          </button>
         </div>
       </div>
-      {!expanded ? (
-        <p className="settings-note">
-          Audit trail collapsed. Latest events are available on demand without
-          rendering the full scanner history.
-        </p>
-      ) : (
-        <>
-          <div className="alert-filter-tabs" role="tablist" aria-label="Audit trail filters">
-            {auditTrailFilters.map((item) => (
-              <button
-                key={item.value}
-                type="button"
-                className={filter === item.value ? "is-active" : ""}
-                onClick={() => {
-                  setFilter(item.value);
-                  setLimit(20);
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <SignalEventList
-            events={filtered}
-            deliveries={deliveries}
-            emptyCopy="No matching scanner audit events."
-            onAcknowledge={onAcknowledge}
-          />
-          {totalForFilter > filtered.length && (
-            <button
-              type="button"
-              className="button button--secondary"
-              onClick={() => setLimit((current) => current + 20)}
-            >
-              Show more
-            </button>
-          )}
-        </>
-      )}
+      <div className="alert-filter-tabs" role="tablist" aria-label="Audit trail filters">
+        {auditTrailFilters.map((item) => (
+          <button
+            key={item.value}
+            type="button"
+            className={filter === item.value ? "is-active" : ""}
+            onClick={() => {
+              setFilter(item.value);
+              expandable.setExpanded(false);
+            }}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <ExpandableRowsControls
+        expanded={expandable.expanded}
+        hasOverflow={expandable.hasOverflow}
+        totalRows={expandable.totalRows}
+        visibleCount={expandable.visibleCount}
+        onToggle={() => expandable.setExpanded(!expandable.expanded)}
+      />
+      <SignalEventList
+        events={expandable.visibleRows}
+        deliveries={deliveries}
+        emptyCopy="No matching scanner audit events."
+        onAcknowledge={onAcknowledge}
+      />
     </section>
   );
 }
@@ -610,26 +587,40 @@ function GroupedAlertEventList({
   eventMeta: (event: DashboardData["signalEvents"]["events"][number]) => ReturnType<typeof classifySignalEventAlert>;
   onAcknowledge: (event: DashboardData["signalEvents"]["events"][number]) => Promise<void>;
 }) {
+  const sorted = useMemo(
+    () => [...events].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)),
+    [events],
+  );
+  const expandable = useExpandableRows(sorted, { expandedLimit: 50 });
   if (!events.length) return <div className="empty-state">{emptyCopy}</div>;
   const groups = new Map<string, DashboardData["signalEvents"]["events"]>();
-  for (const event of [...events].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))) {
+  for (const event of expandable.visibleRows) {
     const key = event.occurredAt.slice(0, 10) || "Unknown date";
     groups.set(key, [...(groups.get(key) ?? []), event]);
   }
   return (
-    <div className="alerts-date-groups">
-      {[...groups.entries()].map(([date, group]) => (
-        <section className="alerts-date-group" key={date}>
-          <h3>{date}</h3>
-          <SignalEventList
-            events={group}
-            deliveries={deliveries}
-            eventMeta={eventMeta}
-            onAcknowledge={onAcknowledge}
-          />
-        </section>
-      ))}
-    </div>
+    <>
+      <ExpandableRowsControls
+        expanded={expandable.expanded}
+        hasOverflow={expandable.hasOverflow}
+        totalRows={expandable.totalRows}
+        visibleCount={expandable.visibleCount}
+        onToggle={() => expandable.setExpanded(!expandable.expanded)}
+      />
+      <div className="alerts-date-groups">
+        {[...groups.entries()].map(([date, group]) => (
+          <section className="alerts-date-group" key={date}>
+            <h3>{date}</h3>
+            <SignalEventList
+              events={group}
+              deliveries={deliveries}
+              eventMeta={eventMeta}
+              onAcknowledge={onAcknowledge}
+            />
+          </section>
+        ))}
+      </div>
+    </>
   );
 }
 

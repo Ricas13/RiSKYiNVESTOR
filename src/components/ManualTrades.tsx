@@ -1,5 +1,6 @@
 import { Plus, Save, X } from "lucide-react";
 import { useMemo, useState, type FormEvent, type InputHTMLAttributes } from "react";
+import { useExpandableRows } from "../hooks/useExpandableRows";
 import type { ManualTrade, MultiStrategyPublicState } from "../types";
 import { formatDateTime, formatMoney, formatNumber } from "../utils/format";
 import {
@@ -16,7 +17,7 @@ import {
   type OpenTradeRow,
   type SimpleTradeFormState,
 } from "../utils/tradeJournalSignalActions";
-import { Badge } from "./ui";
+import { Badge, ExpandableRowsControls } from "./ui";
 
 interface CloseTradeState {
   exitDate: string;
@@ -396,6 +397,7 @@ function OpenTradesTable({
   rows: OpenTradeRow[];
   onClose: (row: OpenTradeRow) => void;
 }) {
+  const expandable = useExpandableRows(rows);
   return (
     <section className="panel manual-table-panel" id="open-trades">
       <div className="panel-title-row">
@@ -408,6 +410,15 @@ function OpenTradesTable({
       {rows.length === 0 ? (
         <div className="empty-state">No open manual trades yet.</div>
       ) : (
+        <>
+        <ExpandableRowsControls
+          expanded={expandable.expanded}
+          hasOverflow={expandable.hasOverflow}
+          totalRows={expandable.totalRows}
+          visibleCount={expandable.visibleCount}
+          onToggle={() => expandable.setExpanded(!expandable.expanded)}
+          expandLabel="Show all"
+        />
         <div className="table-scroll">
           <table className="data-table manual-trade-table simple-trade-table">
             <thead>
@@ -424,7 +435,7 @@ function OpenTradesTable({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {expandable.visibleRows.map((row) => (
                 <tr key={row.trade.id}>
                   <td data-label="Date opened">{safeDate(row.dateOpened)}</td>
                   <td data-label="Strategy">{row.strategySource}</td>
@@ -448,12 +459,14 @@ function OpenTradesTable({
             </tbody>
           </table>
         </div>
+        </>
       )}
     </section>
   );
 }
 
 function ClosedTradesTable({ rows }: { rows: ClosedTradeRow[] }) {
+  const expandable = useExpandableRows(rows);
   return (
     <section className="panel manual-table-panel" id="closed-trades">
       <div className="panel-title-row">
@@ -466,6 +479,15 @@ function ClosedTradesTable({ rows }: { rows: ClosedTradeRow[] }) {
       {rows.length === 0 ? (
         <div className="empty-state">No closed manual trades yet.</div>
       ) : (
+        <>
+        <ExpandableRowsControls
+          expanded={expandable.expanded}
+          hasOverflow={expandable.hasOverflow}
+          totalRows={expandable.totalRows}
+          visibleCount={expandable.visibleCount}
+          onToggle={() => expandable.setExpanded(!expandable.expanded)}
+          expandLabel="Show all"
+        />
         <div className="table-scroll">
           <table className="data-table manual-trade-table simple-trade-table">
             <thead>
@@ -484,7 +506,7 @@ function ClosedTradesTable({ rows }: { rows: ClosedTradeRow[] }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {expandable.visibleRows.map((row) => (
                 <tr key={row.trade.id}>
                   <td data-label="Date opened">{safeDate(row.dateOpened)}</td>
                   <td data-label="Date closed">{safeDate(row.dateClosed)}</td>
@@ -508,6 +530,7 @@ function ClosedTradesTable({ rows }: { rows: ClosedTradeRow[] }) {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </section>
   );

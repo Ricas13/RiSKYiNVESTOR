@@ -16,6 +16,8 @@ class SuperTrendPoint:
     raw_multiplier: float | None = None
     atr: float | None = None
     prior_atr: float | None = None
+    flip_to_green: bool = False
+    flip_to_red: bool = False
 
 
 def rma(values: list[float], length: int) -> list[float | None]:
@@ -54,11 +56,11 @@ def atr_rma(bars: list[PriceBar], length: int) -> list[float | None]:
 
 def adaptive_supertrend_factor(
     current_atr: float,
-    prior_atr: float,
+    prior_atr: float | None,
     *,
     switch_stoploss: bool = False,
 ) -> tuple[float, float]:
-    if prior_atr <= 0:
+    if prior_atr is None or prior_atr <= 0:
         raw_multiplier = 1.0
     else:
         zone_size = prior_atr / 4
@@ -92,11 +94,11 @@ def supertrend(
     points: list[SuperTrendPoint] = []
     upper_band = lower_band = supertrend_value = None
     direction = 1
-    for index in range(atr_period, len(source_bars)):
+    for index in range(atr_period - 1, len(source_bars)):
         bar = source_bars[index]
         atr = atrs[index]
-        prior_atr = atrs[index - 1]
-        if atr is None or prior_atr is None:
+        prior_atr = atrs[index - 1] if index > 0 else None
+        if atr is None:
             continue
         factor, raw_multiplier = adaptive_supertrend_factor(
             atr,
@@ -106,10 +108,11 @@ def supertrend(
         midpoint = (bar.high + bar.low) / 2
         basic_upper = midpoint + factor * atr
         basic_lower = midpoint - factor * atr
-        previous_close = source_bars[index - 1].close
+        previous_close = source_bars[index - 1].close if index > 0 else bar.close
         previous_upper = upper_band
         previous_lower = lower_band
         previous_supertrend = supertrend_value
+        previous_direction = direction
         if previous_upper is None:
             upper_band = basic_upper
         else:
@@ -127,7 +130,7 @@ def supertrend(
                 else previous_lower
             )
 
-        if previous_supertrend is None:
+        if previous_supertrend is None or prior_atr is None:
             direction = 1
         elif previous_upper is not None and previous_supertrend == previous_upper:
             direction = -1 if bar.close > upper_band else 1
@@ -135,6 +138,8 @@ def supertrend(
             direction = 1 if bar.close < lower_band else -1
 
         state = "in" if direction < 0 else "out"
+        flip_to_green = direction < 0 and previous_direction > 0
+        flip_to_red = direction > 0 and previous_direction < 0
         supertrend_value = lower_band if direction < 0 else upper_band
         points.append(
             SuperTrendPoint(
@@ -147,6 +152,8 @@ def supertrend(
                 raw_multiplier=raw_multiplier,
                 atr=atr,
                 prior_atr=prior_atr,
+                flip_to_green=flip_to_green,
+                flip_to_red=flip_to_red,
             )
         )
     return points

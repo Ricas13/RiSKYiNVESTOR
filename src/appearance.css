@@ -390,6 +390,33 @@ body {
   scrollbar-color: var(--border-strong) transparent;
 }
 
+.expandable-rows__controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.expandable-rows__controls:first-child {
+  margin-top: 0;
+}
+
+.expandable-rows__controls span {
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 620px) {
+  .expandable-rows__controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .recharts-wrapper [stroke="#26d980"] {
   stroke: var(--green);
 }

@@ -76,6 +76,7 @@ export interface MultiStrategyRecord {
   latestEvent: MultiStrategyEvent | null;
   dataFreshness: string | null;
   warnings?: ModelPerformanceWarning[];
+  diagnostics?: Array<Record<string, unknown>>;
 }
 
 export interface MultiStrategySnapshot {
@@ -112,6 +113,7 @@ export const defaultPublicPositionWarningLimit = 10;
 export const defaultPublicClosedTradeLimit = 100;
 export const defaultPublicEquitySnapshotLimit = 500;
 export const defaultPublicScannerErrorLimit = 25;
+export const defaultPublicStrategyDiagnosticLimit = 100;
 
 function objectValue(value: unknown, label: string) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -270,6 +272,12 @@ function strategyValue(value: unknown): MultiStrategyRecord {
   const warnings = Array.isArray(strategy.warnings)
     ? strategy.warnings.map(warningValue)
     : [];
+  const diagnostics = Array.isArray(strategy.diagnostics)
+    ? strategy.diagnostics.filter(
+        (item): item is Record<string, unknown> =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item),
+      )
+    : [];
   return {
     strategyId,
     name: textValue(strategy.name, "Strategy name", 200),
@@ -331,6 +339,7 @@ function strategyValue(value: unknown): MultiStrategyRecord {
         ? null
         : textValue(strategy.dataFreshness, "Data freshness", 100),
     warnings,
+    diagnostics,
   };
 }
 
@@ -430,6 +439,7 @@ export function trimMultiStrategyPublicState(
     positionWarnings?: number;
     closedVirtualTrades?: number;
     equitySnapshots?: number;
+    diagnostics?: number;
   } = {},
 ): MultiStrategyPublicState {
   if (!state.snapshot) return state;
@@ -461,6 +471,10 @@ export function trimMultiStrategyPublicState(
     options.equitySnapshots,
     defaultPublicEquitySnapshotLimit,
   );
+  const diagnostics = clampLimit(
+    options.diagnostics,
+    defaultPublicStrategyDiagnosticLimit,
+  );
   return {
     ...state,
     snapshot: {
@@ -490,6 +504,7 @@ export function trimMultiStrategyPublicState(
           ? latestStrategyEvents(strategy.regimeChangeEvents, eventsPerStrategy)
           : undefined,
         warnings: strategy.warnings?.slice(0, strategyWarnings),
+        diagnostics: strategy.diagnostics?.slice(-diagnostics),
       })),
     },
   };
