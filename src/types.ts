@@ -523,6 +523,7 @@ export interface NotificationSettings {
     StrategyId,
     Record<StrategyEventType, string[]>
   >;
+  routes: NotificationRouteSettings;
   dailySummary: {
     enabled: boolean;
     time: string;
@@ -565,6 +566,26 @@ export interface NotificationSettings {
     maximumDeliveries: number;
   };
 }
+
+export type NotificationRouteCategory =
+  | "dailySummary"
+  | "supertrendSignals"
+  | "sma200Signals"
+  | "scannerErrors"
+  | "modelWarnings"
+  | "deliveryFailures"
+  | "manualTrades";
+
+export interface NotificationRoute {
+  enabled: boolean;
+  destinationId: string | null;
+  minimumSeverity: "warning" | "error" | "critical";
+}
+
+export type NotificationRouteSettings = Record<
+  NotificationRouteCategory,
+  NotificationRoute
+>;
 
 export interface NotificationDelivery {
   deliveryId: string;
@@ -624,6 +645,15 @@ export interface DiscordDestination {
   lastSuccessfulDeliveryAt: string | null;
   latestResult: NotificationDeliveryStatus | null;
   maskedEnding: string;
+  subscriptions: {
+    entry: boolean;
+    exit: boolean;
+    lowLiquidity: boolean;
+    scannerError: boolean;
+    watchlistOnly: boolean;
+    dailySummary: boolean;
+    weeklySummary: boolean;
+  };
   legacy: boolean;
   editable: boolean;
 }

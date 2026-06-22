@@ -434,6 +434,32 @@ test("dashboard typography layout still renders command-centre sections", () => 
   assert.match(html, /Daily SuperTrend/);
   assert.match(html, /Nasdaq SMA200/);
   assert.match(html, /Recent signal history/);
+  assert.match(html, /View full history in Alerts/);
+});
+
+test("dashboard shows bounded recent signal history", () => {
+  const events = Array.from({ length: 7 }, (_unused, index) =>
+    signalEvent({
+      eventId: `recent-history-${index}`,
+      occurredAt: `2026-06-21T0${index}:00:00.000Z`,
+      reasonText: `Recent dashboard history ${index}`,
+    }),
+  );
+  const html = render(
+    dashboard(snapshot(), {
+      signalEvents: {
+        version: 2,
+        isExample: false,
+        events,
+      },
+    } as Partial<DashboardData>),
+  );
+  const historyHtml = html.slice(html.indexOf("Latest scanner audit notes"));
+
+  assert.match(historyHtml, /Recent dashboard history 6/);
+  assert.match(historyHtml, /Recent dashboard history 2/);
+  assert.doesNotMatch(historyHtml, /Recent dashboard history 1/);
+  assert.doesNotMatch(historyHtml, /Recent dashboard history 0/);
 });
 
 test("action-needed section excludes old scannerError events when scanner is healthy", () => {

@@ -140,12 +140,7 @@ function SignalsPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) 
         copy="Review current SuperTrend ticker-pair status, weekly reversals, open virtual positions and scanner freshness from the latest scanner snapshot."
       />
       <ScannerSignalMonitor monitor={data.strategyMonitor} />
-      <SectionHeader
-        eyebrow="Recent signal events"
-        title="Event stream"
-        copy="Canonical scanner events remain available below the ticker-pair table for audit and acknowledgement."
-      />
-      <SignalEventList
+      <SignalAuditTrail
         events={data.signalEvents.events}
         deliveries={data.notifications.deliveries}
         onAcknowledge={(event) =>
@@ -168,6 +163,153 @@ function SignalsPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) 
       />
     </div>
   );
+}
+
+type AuditTrailFilter =
+  | "all"
+  | "entries"
+  | "exits"
+  | "current-week"
+  | "warnings"
+  | "scanner-errors";
+
+const auditTrailFilters: Array<{ value: AuditTrailFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "entries", label: "Entries" },
+  { value: "exits", label: "Exits" },
+  { value: "current-week", label: "Current week" },
+  { value: "warnings", label: "Warnings" },
+  { value: "scanner-errors", label: "Scanner errors" },
+];
+
+function SignalAuditTrail({
+  events,
+  deliveries,
+  onAcknowledge,
+}: {
+  events: DashboardData["signalEvents"]["events"];
+  deliveries: DashboardData["notifications"]["deliveries"];
+  onAcknowledge: (event: DashboardData["signalEvents"]["events"][number]) => Promise<void>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [filter, setFilter] = useState<AuditTrailFilter>("all");
+  const [limit, setLimit] = useState(20);
+  const filtered = useMemo(
+    () => filterAuditTrailEvents(events, filter).slice(0, limit),
+    [events, filter, limit],
+  );
+  const totalForFilter = useMemo(
+    () => filterAuditTrailEvents(events, filter).length,
+    [events, filter],
+  );
+
+  return (
+    <section className="control-panel signal-audit-trail">
+      <div className="control-panel__heading">
+        <div>
+          <span>Audit trail</span>
+          <h2>Scanner event audit trail</h2>
+          <p>
+            Historical scanner events are kept for audit purposes. Current
+            actions are shown on the Dashboard and Alerts page.
+          </p>
+        </div>
+        <div className="button-row">
+          <a className="button button--secondary" href="#/alerts">
+            View full history in Alerts
+          </a>
+          <button
+            type="button"
+            className="button button--secondary"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded ? "Hide audit trail" : "Show audit trail"}
+          </button>
+        </div>
+      </div>
+      {!expanded ? (
+        <p className="settings-note">
+          Audit trail collapsed. Latest events are available on demand without
+          rendering the full scanner history.
+        </p>
+      ) : (
+        <>
+          <div className="alert-filter-tabs" role="tablist" aria-label="Audit trail filters">
+            {auditTrailFilters.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                className={filter === item.value ? "is-active" : ""}
+                onClick={() => {
+                  setFilter(item.value);
+                  setLimit(20);
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <SignalEventList
+            events={filtered}
+            deliveries={deliveries}
+            emptyCopy="No matching scanner audit events."
+            onAcknowledge={onAcknowledge}
+          />
+          {totalForFilter > filtered.length && (
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() => setLimit((current) => current + 20)}
+            >
+              Show more
+            </button>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function filterAuditTrailEvents(
+  events: DashboardData["signalEvents"]["events"],
+  filter: AuditTrailFilter,
+) {
+  const sorted = [...events].sort((a, b) =>
+    b.occurredAt.localeCompare(a.occurredAt),
+  );
+  if (filter === "entries") {
+    return sorted.filter((event) => event.signalState === "actionable_entry");
+  }
+  if (filter === "exits") {
+    return sorted.filter((event) => event.signalState === "actionable_exit");
+  }
+  if (filter === "warnings") {
+    return sorted.filter((event) =>
+      ["low_liquidity_warning", "wait_review"].includes(event.signalState),
+    );
+  }
+  if (filter === "scanner-errors") {
+    return sorted.filter((event) => event.signalState === "scanner_error");
+  }
+  if (filter === "current-week") {
+    const anchor = parseDate(sorted[0]?.occurredAt) ?? new Date();
+    const weekStart = new Date(
+      Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), anchor.getUTCDate()),
+    );
+    weekStart.setUTCDate(weekStart.getUTCDate() - ((weekStart.getUTCDay() + 6) % 7));
+    return sorted.filter((event) => {
+      const occurred = parseDate(event.occurredAt);
+      return Boolean(occurred && occurred >= weekStart);
+    });
+  }
+  return sorted;
+}
+
+function parseDate(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function PortfolioPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) {
@@ -426,7 +568,7 @@ function AlertsPage({
           signalEventOffset query parameters for paged API reads.
         </p>
       )}
-      <SignalEventList
+      <GroupedAlertEventList
         events={filteredEvents}
         deliveries={data.notifications.deliveries}
         emptyCopy={emptyAlertFilterCopy(filter)}
@@ -451,6 +593,42 @@ function AlertsPage({
           }
         }}
       />
+    </div>
+  );
+}
+
+function GroupedAlertEventList({
+  events,
+  deliveries,
+  emptyCopy,
+  eventMeta,
+  onAcknowledge,
+}: {
+  events: DashboardData["signalEvents"]["events"];
+  deliveries: DashboardData["notifications"]["deliveries"];
+  emptyCopy: string;
+  eventMeta: (event: DashboardData["signalEvents"]["events"][number]) => ReturnType<typeof classifySignalEventAlert>;
+  onAcknowledge: (event: DashboardData["signalEvents"]["events"][number]) => Promise<void>;
+}) {
+  if (!events.length) return <div className="empty-state">{emptyCopy}</div>;
+  const groups = new Map<string, DashboardData["signalEvents"]["events"]>();
+  for (const event of [...events].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))) {
+    const key = event.occurredAt.slice(0, 10) || "Unknown date";
+    groups.set(key, [...(groups.get(key) ?? []), event]);
+  }
+  return (
+    <div className="alerts-date-groups">
+      {[...groups.entries()].map(([date, group]) => (
+        <section className="alerts-date-group" key={date}>
+          <h3>{date}</h3>
+          <SignalEventList
+            events={group}
+            deliveries={deliveries}
+            eventMeta={eventMeta}
+            onAcknowledge={onAcknowledge}
+          />
+        </section>
+      ))}
     </div>
   );
 }

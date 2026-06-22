@@ -68,9 +68,9 @@ export function DashboardCommandCentre({ data }: { data: DashboardData }) {
         <div className="control-panel__heading">
           <div>
             <span>Recent signal history</span>
-            <h2>Scanner event stream</h2>
+            <h2>Latest scanner audit notes</h2>
           </div>
-          <a href="#/signal-monitor">Open Signal Monitor</a>
+          <a href="#/alerts">View full history in Alerts</a>
         </div>
         {model.scannerErrorsHiddenFromHistory && (
           <p className="dashboard-history-note">
@@ -82,7 +82,7 @@ export function DashboardCommandCentre({ data }: { data: DashboardData }) {
         <SignalEventList
           events={model.recentHistoryEvents}
           deliveries={data.notifications.deliveries}
-          limit={6}
+          limit={5}
           compact
           emptyCopy="No recent signal history has been imported."
         />
@@ -139,7 +139,8 @@ function ScannerHealthStrip({
       {scanner.warnings.length > 0 && (
         <div className="dashboard-history-note" role="status">
           <strong>Performance warning:</strong> Signal state may still be valid,
-          but model returns/P&amp;L should be reviewed before relying on them.
+          but model returns/P&amp;L need review.{" "}
+          <a href="#/strategies">Open Strategy Performance</a>.
         </div>
       )}
     </section>

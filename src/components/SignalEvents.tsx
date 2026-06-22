@@ -29,6 +29,12 @@ function eventTone(type: SignalState) {
   return "amber" as const;
 }
 
+function eventDisplayTone(type: SignalState, meta?: SignalEventAlertMeta) {
+  if (type === "scanner_error" && meta?.isHistorical) return "blue" as const;
+  if (meta?.isAcknowledged) return "neutral" as const;
+  return eventTone(type);
+}
+
 function stateLabel(type: SignalState) {
   return type.replace(/_/g, " ");
 }
@@ -178,16 +184,27 @@ export function SignalEventList({
           .filter((delivery) => delivery.eventId === event.eventId)
           .sort((a, b) => b.attemptedAt.localeCompare(a.attemptedAt))[0];
         const meta = eventMeta?.(event);
+        const tone = eventDisplayTone(event.signalState, meta);
+        const rowState = meta?.isCurrentAction
+          ? "current"
+          : meta?.isAcknowledged
+            ? "acknowledged"
+            : meta?.isHistorical
+              ? "historical"
+              : "unacknowledged";
         return (
-          <article className="event-row" key={event.eventId}>
+          <article
+            className={`event-row event-row--${rowState}`}
+            key={event.eventId}
+          >
             <span
-              className={`event-row__icon event-row__icon--${eventTone(event.signalState)}`}
+              className={`event-row__icon event-row__icon--${tone}`}
             >
               <EventIcon type={event.signalState} />
             </span>
             <div className="event-row__main">
               <div className="event-row__meta">
-                <Badge tone={eventTone(event.signalState)}>
+                <Badge tone={tone}>
                   {stateLabel(event.signalState)}
                 </Badge>
                 {meta && (

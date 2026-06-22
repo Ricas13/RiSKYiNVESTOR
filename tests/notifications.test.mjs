@@ -606,7 +606,7 @@ test("no subscribed enabled destination records one skipped audit result", async
   }
 });
 
-test("integrated strategy events default to website history only", async () => {
+test("missing strategy route falls back to default destination", async () => {
   const value = await fixture();
   try {
     const result = await value.dispatcher.dispatchSignal(
@@ -617,9 +617,8 @@ test("integrated strategy events default to website history only", async () => {
         source: "integrated_python_scanner",
       }),
     );
-    assert.equal(result.status, "skipped");
-    assert.match(result.errorMessage, /website history only/i);
-    assert.equal(value.transport.calls.length, 0);
+    assert.equal(result.status, "sent");
+    assert.equal(value.transport.calls.length, 1);
     assert.equal(
       (await value.deliveries.read()).some(
         (delivery) => delivery.eventId === "supertrend-muted",
@@ -678,6 +677,135 @@ test("strategy-specific policies isolate Discord routing and deduplicate per des
       history.filter((delivery) => delivery.eventId === smaEvent.eventId).length,
       1,
     );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("notification routes send categories to selected destinations", async () => {
+  const value = await fixture(new FakeDiscordTransport(), 2);
+  const [primary, secondary] = value.destinations;
+  try {
+    await value.manager.update(primary.destinationId, {
+      subscriptions: noSubscriptions(),
+    });
+    await value.manager.update(secondary.destinationId, {
+      subscriptions: noSubscriptions(),
+    });
+    await value.dispatcher.updateSettings({
+      routes: {
+        dailySummary: {
+          enabled: true,
+          destinationId: secondary.destinationId,
+          minimumSeverity: "warning",
+        },
+        supertrendSignals: {
+          enabled: true,
+          destinationId: primary.destinationId,
+          minimumSeverity: "warning",
+        },
+        sma200Signals: {
+          enabled: true,
+          destinationId: secondary.destinationId,
+          minimumSeverity: "warning",
+        },
+        scannerErrors: {
+          enabled: true,
+          destinationId: secondary.destinationId,
+          minimumSeverity: "error",
+        },
+      },
+    });
+
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-supertrend",
+        strategyId: "daily-supertrend",
+        strategyName: "Daily SuperTrend",
+        source: "integrated_python_scanner",
+      }),
+    );
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-sma",
+        strategyId: "nasdaq-sma200-3x",
+        strategyName: "Nasdaq SMA200 Regime — 3x",
+        source: "integrated_python_scanner",
+      }),
+    );
+    await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-scanner-error",
+        signalState: "scanner_error",
+        isActionable: true,
+        reasonText: "Scanner failed safely.",
+      }),
+    );
+    await value.dispatcher.runDailySummary(
+      {
+        snapshot: snapshot(),
+        latestActionableEvent: event(),
+        scanner: {
+          status: "current",
+          lastSuccessfulScanAt: "2026-06-19T20:00:00.000Z",
+          staleAfterMinutes: 180,
+        },
+      },
+      { force: true, now: new Date("2026-06-19T21:15:00.000Z") },
+    );
+
+    assert.deepEqual(
+      value.transport.calls.map(({ webhook }) => webhook.slice(-8)),
+      ["secret-1", "secret-2", "secret-2", "secret-2"],
+    );
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("disabled notification route does not send and missing route falls back", async () => {
+  const value = await fixture(new FakeDiscordTransport(), 1);
+  const [destination] = value.destinations;
+  try {
+    await value.dispatcher.updateSettings({
+      routes: {
+        supertrendSignals: {
+          enabled: false,
+          destinationId: destination.destinationId,
+          minimumSeverity: "warning",
+        },
+      },
+    });
+    const disabled = await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-disabled",
+        strategyId: "daily-supertrend",
+        strategyName: "Daily SuperTrend",
+        source: "integrated_python_scanner",
+      }),
+    );
+    assert.equal(disabled.status, "disabled");
+    assert.equal(value.transport.calls.length, 0);
+
+    await value.dispatcher.updateSettings({
+      routes: {
+        supertrendSignals: {
+          enabled: false,
+          destinationId: null,
+          minimumSeverity: "warning",
+        },
+      },
+    });
+    const fallback = await value.dispatcher.dispatchSignal(
+      event({
+        eventId: "route-fallback",
+        strategyId: "daily-supertrend",
+        strategyName: "Daily SuperTrend",
+        source: "integrated_python_scanner",
+      }),
+    );
+    assert.equal(fallback.status, "sent");
+    assert.equal(value.transport.calls.length, 1);
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }
