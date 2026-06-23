@@ -16,6 +16,7 @@ export interface MultiStrategyEvent {
   occurredAt: string;
   signalTicker: string;
   executionTicker: string;
+  calculationTicker?: string;
   reason: string;
 }
 
@@ -167,17 +168,24 @@ function eventValue(
   if (Number.isNaN(new Date(occurredAt).getTime())) {
     throw new Error("Event timestamp is invalid.");
   }
+  const signalTicker = textValue(event.signalTicker, "Signal ticker", 80);
+  const executionTicker = textValue(
+    event.executionTicker,
+    "Execution ticker",
+    80,
+  );
+  const calculationTicker =
+    typeof event.calculationTicker === "string" && event.calculationTicker.trim()
+      ? event.calculationTicker.trim().slice(0, 80)
+      : signalTicker;
   return {
     eventId: textValue(event.eventId, "Event ID", 200),
     strategyId: expectedStrategyId,
     eventType: eventType as MultiStrategyEvent["eventType"],
     occurredAt,
-    signalTicker: textValue(event.signalTicker, "Signal ticker", 80),
-    executionTicker: textValue(
-      event.executionTicker,
-      "Execution ticker",
-      80,
-    ),
+    signalTicker,
+    executionTicker,
+    calculationTicker,
     reason: textValue(event.reason, "Event reason", 1000),
   };
 }

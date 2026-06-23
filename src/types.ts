@@ -322,6 +322,7 @@ export interface MultiStrategyEvent {
   occurredAt: string;
   signalTicker: string;
   executionTicker: string;
+  calculationTicker?: string;
   reason: string;
 }
 

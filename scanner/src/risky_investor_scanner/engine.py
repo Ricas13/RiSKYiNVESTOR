@@ -142,7 +142,7 @@ class ScannerEngine:
             if execution_bars:
                 freshness.append(execution_bars[-1].day.isoformat())
                 market_days.update((bar.day for bar in execution_bars))
-            points = supertrend(
+            entry_points = supertrend(
                 signal_bars,
                 config.atr_period,
                 config.multiplier,
@@ -150,18 +150,36 @@ class ScannerEngine:
                 switch_stoploss=config.switch_stoploss,
                 use_confirmed=config.use_confirmed,
             )
-            if not points or not execution_bars:
+            exit_points = supertrend(
+                execution_bars,
+                config.atr_period,
+                config.multiplier,
+                smoothing=config.smoothing,
+                switch_stoploss=config.switch_stoploss,
+                use_confirmed=config.use_confirmed,
+            )
+            if not entry_points or not exit_points or not execution_bars:
                 continue
             row_key = _row_key(row)
             row_data[row_key] = {'row': row, 'executionBars': execution_bars}
-            previous_state = 'out'
-            for point in points:
+            previous_entry_state = 'out'
+            for point in entry_points:
                 point_day = date.fromisoformat(point.date)
                 market_days.add(point_day)
-                if point.state != previous_state:
-                    transitions.setdefault(point_day, []).append({'row': row, 'rowKey': row_key, 'state': point.state, 'previousState': previous_state})
-                    diagnostics.append(_supertrend_diagnostic(row, point, previous_state))
-                previous_state = point.state
+                if point.state != previous_entry_state:
+                    diagnostics.append(_supertrend_diagnostic(row, point, previous_entry_state, row.signal_ticker))
+                    if previous_entry_state == 'out' and point.state == 'in':
+                        transitions.setdefault(point_day, []).append({'row': row, 'rowKey': row_key, 'action': 'entry', 'calculationTicker': row.signal_ticker})
+                previous_entry_state = point.state
+            previous_exit_state = 'out'
+            for point in exit_points:
+                point_day = date.fromisoformat(point.date)
+                market_days.add(point_day)
+                if point.state != previous_exit_state:
+                    diagnostics.append(_supertrend_diagnostic(row, point, previous_exit_state, row.execution_ticker))
+                    if previous_exit_state == 'in' and point.state == 'out':
+                        transitions.setdefault(point_day, []).append({'row': row, 'rowKey': row_key, 'action': 'exit', 'calculationTicker': row.execution_ticker})
+                previous_exit_state = point.state
         if not row_data or not market_days:
             if freshness:
                 result['dataFreshness'] = max(freshness)
@@ -173,7 +191,7 @@ class ScannerEngine:
         events: list[dict[str, Any]] = []
         equity: list[dict[str, Any]] = []
         for current_day in sorted(market_days):
-            todays_transitions = sorted(transitions.get(current_day, []), key=lambda item: (item['row'].signal_ticker, item['row'].execution_ticker))
+            todays_transitions = sorted(transitions.get(current_day, []), key=lambda item: (item['row'].signal_ticker, item['row'].execution_ticker, 0 if item['action'] == 'exit' else 1))
             for transition in todays_transitions:
                 row = transition['row']
                 row_key = transition['rowKey']
@@ -181,7 +199,7 @@ class ScannerEngine:
                 execution_bar = _price_on_or_before(execution_bars, current_day)
                 if execution_bar is None:
                     continue
-                if transition['state'] == 'in':
+                if transition['action'] == 'entry':
                     if row_key in positions:
                         continue
                     if len(positions) >= config.maximum_concurrent_positions:
@@ -194,12 +212,12 @@ class ScannerEngine:
                     if quantity <= 0:
                         continue
                     opened = current_day.isoformat()
-                    position = {'positionId': event_id(SUPER_ID, 'position', opened, row_key), 'label': 'Virtual model position', 'signalTicker': row.signal_ticker, 'executionTicker': row.execution_ticker, 'state': 'in', 'entryTimestamp': opened, 'entryPrice': execution_bar.close, 'latestPrice': execution_bar.close, 'quantity': quantity, 'allocation': allocation, 'openPnlValue': -cost, 'openPnlPercent': -cost / allocation * 100, 'daysHeld': 0, 'latestSignal': 'entry', 'reason': 'SuperTrend changed from out to in.'}
+                    position = {'positionId': event_id(SUPER_ID, 'position', opened, row_key), 'label': 'Virtual model position', 'signalTicker': row.signal_ticker, 'executionTicker': row.execution_ticker, 'state': 'in', 'entryTimestamp': opened, 'entryPrice': execution_bar.close, 'latestPrice': execution_bar.close, 'quantity': quantity, 'allocation': allocation, 'openPnlValue': -cost, 'openPnlPercent': -cost / allocation * 100, 'daysHeld': 0, 'latestSignal': 'entry', 'reason': 'SuperTrend BUY on signal ticker; opened leveraged execution ticker.'}
                     positions[row_key] = position
                     cash = max(0.0, cash - allocation)
                     identifier = event_id(SUPER_ID, 'entry', opened, row_key)
-                    events.append(_event(identifier, SUPER_ID, 'entry', opened, row.signal_ticker, row.execution_ticker, 'SuperTrend changed from out to in.'))
-                elif transition['state'] == 'out' and row_key in positions:
+                    events.append(_event(identifier, SUPER_ID, 'entry', opened, row.signal_ticker, row.execution_ticker, 'SuperTrend BUY on signal ticker; opened leveraged execution ticker.', calculation_ticker=transition['calculationTicker']))
+                elif transition['action'] == 'exit' and row_key in positions:
                     position = positions[row_key]
                     proceeds = position['quantity'] * execution_bar.close
                     cost = proceeds * config.transaction_cost_percent / 100
@@ -207,11 +225,11 @@ class ScannerEngine:
                     pnl = proceeds - position['allocation']
                     closed_at = current_day.isoformat()
                     entry_day = datetime.fromisoformat(position['entryTimestamp']).date()
-                    closed.append({**position, 'state': 'closed', 'exitTimestamp': closed_at, 'exitPrice': execution_bar.close, 'latestPrice': execution_bar.close, 'openPnlValue': pnl, 'openPnlPercent': pnl / max(position['allocation'], 1e-06) * 100, 'daysHeld': (current_day - entry_day).days, 'pnlValue': pnl, 'pnlPercent': pnl / max(position['allocation'], 1e-06) * 100, 'exitReason': 'SuperTrend changed from in to out.'})
+                    closed.append({**position, 'state': 'closed', 'exitTimestamp': closed_at, 'exitPrice': execution_bar.close, 'latestPrice': execution_bar.close, 'openPnlValue': pnl, 'openPnlPercent': pnl / max(position['allocation'], 1e-06) * 100, 'daysHeld': (current_day - entry_day).days, 'pnlValue': pnl, 'pnlPercent': pnl / max(position['allocation'], 1e-06) * 100, 'exitReason': 'SuperTrend SELL on execution ticker; closed leveraged position.'})
                     cash += proceeds
                     del positions[row_key]
                     identifier = event_id(SUPER_ID, 'exit', closed_at, row_key)
-                    events.append(_event(identifier, SUPER_ID, 'exit', closed_at, row.signal_ticker, row.execution_ticker, 'SuperTrend changed from in to out.'))
+                    events.append(_event(identifier, SUPER_ID, 'exit', closed_at, row.signal_ticker, row.execution_ticker, 'SuperTrend SELL on execution ticker; closed leveraged position.', calculation_ticker=transition['calculationTicker']))
             invested = _refresh_supertrend_positions(positions, row_data, current_day)
             equity.append({'date': current_day.isoformat(), 'value': cash + invested})
         invested = _refresh_supertrend_positions(positions, row_data, sorted(market_days)[-1])
@@ -448,13 +466,14 @@ class ScannerEngine:
         self.state.setdefault('strategies', {})[SMA_ID] = durable
         return result
 
-def _event(identifier: str, strategy_id: str, event_type: str, occurred_at: str, signal_ticker: str, execution_ticker: str, reason: str) -> dict[str, Any]:
-    return {'eventId': identifier, 'strategyId': strategy_id, 'eventType': event_type, 'occurredAt': occurred_at, 'signalTicker': signal_ticker, 'executionTicker': execution_ticker, 'reason': reason}
+def _event(identifier: str, strategy_id: str, event_type: str, occurred_at: str, signal_ticker: str, execution_ticker: str, reason: str, *, calculation_ticker: str | None = None) -> dict[str, Any]:
+    return {'eventId': identifier, 'strategyId': strategy_id, 'eventType': event_type, 'occurredAt': occurred_at, 'signalTicker': signal_ticker, 'executionTicker': execution_ticker, 'calculationTicker': calculation_ticker or signal_ticker, 'reason': reason}
 
-def _supertrend_diagnostic(row: WatchlistRow, point: Any, previous_state: str) -> dict[str, Any]:
+def _supertrend_diagnostic(row: WatchlistRow, point: Any, previous_state: str, calculation_ticker: str) -> dict[str, Any]:
     return {
         'signalTicker': row.signal_ticker,
         'executionTicker': row.execution_ticker,
+        'calculationTicker': calculation_ticker,
         'date': point.date,
         'previousState': previous_state,
         'state': point.state,
