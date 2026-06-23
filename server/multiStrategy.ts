@@ -12,14 +12,18 @@ export interface MultiStrategyEvent {
     | "stateUpdate"
     | "dailySummary"
     | "weeklySummary"
-    | "scannerError";
+    | "scannerError"
+    | "skipped_entry";
   occurredAt: string;
   signalDate: string;
   generatedAt?: string;
   signalTicker: string;
   executionTicker: string;
   calculationTicker?: string;
+  holdSafetyTicker?: string;
   price?: number;
+  sourceOfTruth?: boolean;
+  severity?: string;
   reason: string;
 }
 
@@ -184,6 +188,7 @@ function eventValue(
       "dailySummary",
       "weeklySummary",
       "scannerError",
+      "skipped_entry",
     ].includes(eventType)
   ) {
     throw new Error("Unsupported strategy event type.");
@@ -225,6 +230,15 @@ function eventValue(
   };
   const price = optionalNumber(event.price);
   if (price !== null) result.price = price;
+  if (typeof event.holdSafetyTicker === "string" && event.holdSafetyTicker.trim()) {
+    result.holdSafetyTicker = event.holdSafetyTicker.trim().slice(0, 80);
+  }
+  if (typeof event.sourceOfTruth === "boolean") {
+    result.sourceOfTruth = event.sourceOfTruth;
+  }
+  if (typeof event.severity === "string" && event.severity.trim()) {
+    result.severity = event.severity.trim().slice(0, 40);
+  }
   return result;
 }
 

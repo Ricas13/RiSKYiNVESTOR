@@ -273,6 +273,7 @@ const strategyConfigurationRepository =
 function canonicalStrategyEvent(event: MultiStrategyEvent) {
   const actionableEntry = event.eventType === "entry";
   const actionableExit = event.eventType === "exit";
+  const diagnosticSkippedEntry = event.eventType === "skipped_entry";
   const strategyName =
     event.strategyId === "daily-supertrend"
       ? "Daily SuperTrend"
@@ -335,7 +336,7 @@ function canonicalStrategyEvent(event: MultiStrategyEvent) {
     rawSourceReference: `multi_strategy_v1:${event.eventId}`,
     isActionable: actionableEntry || actionableExit,
     isAcknowledged: false,
-    discordDeliveryEligible: true,
+    discordDeliveryEligible: !diagnosticSkippedEntry,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
