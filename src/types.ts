@@ -228,7 +228,8 @@ export type StrategyEventType =
   | "stateUpdate"
   | "dailySummary"
   | "weeklySummary"
-  | "scannerError";
+  | "scannerError"
+  | "skipped_entry";
 
 export interface StrategyConfiguration {
   version: 1;
@@ -325,7 +326,10 @@ export interface MultiStrategyEvent {
   signalTicker: string;
   executionTicker: string;
   calculationTicker?: string;
+  holdSafetyTicker?: string;
   price?: number;
+  sourceOfTruth?: boolean;
+  severity?: string;
   reason: string;
 }
 

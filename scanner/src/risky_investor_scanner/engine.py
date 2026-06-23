@@ -162,7 +162,7 @@ class ScannerEngine:
             if not entry_points or not exit_points or not execution_bars:
                 continue
             row_key = _row_key(row)
-            row_data[row_key] = {'row': row, 'executionBars': execution_bars}
+            row_data[row_key] = {'row': row, 'executionBars': execution_bars, 'exitPoints': exit_points}
             previous_entry_state = 'out'
             for point in entry_points:
                 point_day = date.fromisoformat(point.date)
@@ -202,6 +202,29 @@ class ScannerEngine:
                     continue
                 if transition['action'] == 'entry':
                     if row_key in positions:
+                        continue
+                    execution_state = _supertrend_point_on_or_before(
+                        row_data[row_key]['exitPoints'], current_day
+                    )
+                    if execution_state is None or execution_state.state != 'in':
+                        skipped_at = current_day.isoformat()
+                        identifier = event_id(SUPER_ID, 'skipped_entry', skipped_at, row_key)
+                        events.append(
+                            _event(
+                                identifier,
+                                SUPER_ID,
+                                'skipped_entry',
+                                skipped_at,
+                                row.signal_ticker,
+                                row.execution_ticker,
+                                'Signal ticker BUY skipped because execution ticker was already out/red.',
+                                calculation_ticker=transition['calculationTicker'],
+                                price=execution_bar.close,
+                                hold_safety_ticker=row.execution_ticker,
+                                source_of_truth=False,
+                                severity='diagnostic',
+                            )
+                        )
                         continue
                     if len(positions) >= config.maximum_concurrent_positions:
                         continue
@@ -473,10 +496,30 @@ class ScannerEngine:
         self.state.setdefault('strategies', {})[SMA_ID] = durable
         return result
 
-def _event(identifier: str, strategy_id: str, event_type: str, occurred_at: str, signal_ticker: str, execution_ticker: str, reason: str, *, calculation_ticker: str | None = None, price: float | None = None) -> dict[str, Any]:
+def _event(
+    identifier: str,
+    strategy_id: str,
+    event_type: str,
+    occurred_at: str,
+    signal_ticker: str,
+    execution_ticker: str,
+    reason: str,
+    *,
+    calculation_ticker: str | None = None,
+    price: float | None = None,
+    hold_safety_ticker: str | None = None,
+    source_of_truth: bool | None = None,
+    severity: str | None = None,
+) -> dict[str, Any]:
     event = {'eventId': identifier, 'strategyId': strategy_id, 'eventType': event_type, 'occurredAt': occurred_at, 'signalDate': _signal_date(occurred_at), 'signalTicker': signal_ticker, 'executionTicker': execution_ticker, 'calculationTicker': calculation_ticker or signal_ticker, 'reason': reason}
     if price is not None:
         event['price'] = price
+    if hold_safety_ticker:
+        event['holdSafetyTicker'] = hold_safety_ticker
+    if source_of_truth is not None:
+        event['sourceOfTruth'] = source_of_truth
+    if severity:
+        event['severity'] = severity
     return event
 
 def _signal_date(value: str | None) -> str:
@@ -533,6 +576,18 @@ def _chart_data_from_price_histories(price_histories: dict[str, list[PriceBar]],
             }
         )
     return chart_data
+
+def _supertrend_point_on_or_before(points: list[Any], target_day: date) -> Any | None:
+    latest = None
+    for point in points:
+        try:
+            point_day = date.fromisoformat(point.date)
+        except (TypeError, ValueError):
+            continue
+        if point_day > target_day:
+            break
+        latest = point
+    return latest
 
 def _supertrend_diagnostic(row: WatchlistRow, point: Any, previous_state: str, calculation_ticker: str) -> dict[str, Any]:
     return {

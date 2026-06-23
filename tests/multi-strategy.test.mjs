@@ -498,6 +498,44 @@ test("scanner schema enforces strategy isolation and virtual-only positions", ()
   );
 });
 
+test("scanner schema preserves skipped SuperTrend entries as diagnostics", () => {
+  const value = snapshot();
+  value.strategies[0].events.push({
+    eventId: "daily-supertrend:skipped-entry:coin",
+    strategyId: "daily-supertrend",
+    eventType: "skipped_entry",
+    occurredAt: "2026-06-20T00:00:00.000Z",
+    signalDate: "2026-06-20",
+    generatedAt: "2026-06-21T08:00:00.000Z",
+    signalTicker: "COIN",
+    executionTicker: "3CON.L",
+    calculationTicker: "COIN",
+    holdSafetyTicker: "3CON.L",
+    sourceOfTruth: false,
+    severity: "diagnostic",
+    price: 123.45,
+    reason:
+      "Signal ticker BUY skipped because execution ticker was already out/red.",
+  });
+
+  const valid = validateMultiStrategySnapshot(value);
+  const skipped = valid.strategies[0].events.find(
+    (event) => event.eventType === "skipped_entry",
+  );
+  const candidates = selectStrategyEventImportCandidates(valid, 10);
+
+  assert.equal(skipped?.signalTicker, "COIN");
+  assert.equal(skipped?.executionTicker, "3CON.L");
+  assert.equal(skipped?.calculationTicker, "COIN");
+  assert.equal(skipped?.holdSafetyTicker, "3CON.L");
+  assert.equal(skipped?.sourceOfTruth, false);
+  assert.equal(skipped?.severity, "diagnostic");
+  assert.equal(
+    candidates.some((event) => event.eventId === "daily-supertrend:skipped-entry:coin"),
+    true,
+  );
+});
+
 test("scanner schema preserves additive performance warnings", () => {
   const warning = {
     severity: "warning",

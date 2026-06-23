@@ -567,6 +567,34 @@ test("action-needed section includes recent entry, exit and risk events", () => 
   );
 });
 
+test("skipped SuperTrend entries are not current dashboard actions", () => {
+  const skipped = signalEvent({
+    eventId: "skipped-entry-coin",
+    signalState: "watchlist_only",
+    currentTrend: "unknown",
+    previousTrend: "unknown",
+    eligibility: "watchlist_only",
+    allocationStatus: "not_applicable",
+    allocationPercent: 0,
+    reasonCode: "strategy_skipped_entry",
+    reasonText:
+      "Signal ticker BUY skipped because execution ticker was already out/red.",
+    isActionable: false,
+    discordDeliveryEligible: false,
+  });
+  const model = buildDashboardCommandCentreModel(
+    dashboard(snapshot(), {
+      signalEvents: {
+        version: 2,
+        isExample: false,
+        events: [skipped],
+      },
+    } as Partial<DashboardData>),
+  );
+
+  assert.equal(model.actionItems.length, 0);
+});
+
 test("dashboard action-needed uses signal date as primary date", () => {
   const data = dashboard(snapshot(), {
     signalEvents: {

@@ -461,7 +461,7 @@ def test_repeated_scan_has_no_duplicate_events_and_state_survives(tmp_path):
     assert (tmp_path / "state" / "model_state_v1.json").exists()
 
 
-def test_supertrend_rebuild_replays_historical_entries_exits_and_open_current(
+def test_supertrend_rebuild_replays_historical_entries_exits_and_skips_unsafe_current(
     tmp_path, monkeypatch
 ):
     patch_supertrend(
@@ -481,10 +481,18 @@ def test_supertrend_rebuild_replays_historical_entries_exits_and_open_current(
         config, provider, tmp_path / "state", tmp_path / "output"
     ).scan(rebuild_history=True)
     first_strategy = strategy(first, "daily-supertrend")
-    assert event_types(first_strategy) == ["entry", "exit", "entry"]
+    assert event_types(first_strategy) == ["entry", "exit", "skipped_entry"]
     assert len(first_strategy["closedVirtualTrades"]) == 1
-    assert first_strategy["virtualPositions"][0]["entryTimestamp"] == "2024-01-06"
-    assert first_strategy["virtualPositions"][0]["latestPrice"] == 207
+    assert first_strategy["virtualPositions"] == []
+    skipped = first_strategy["events"][-1]
+    assert skipped["signalDate"] == "2024-01-06"
+    assert skipped["calculationTicker"] == "SIGNAL"
+    assert skipped["holdSafetyTicker"] == "EXEC"
+    assert skipped["sourceOfTruth"] is False
+    assert skipped["severity"] == "diagnostic"
+    assert skipped["reason"] == (
+        "Signal ticker BUY skipped because execution ticker was already out/red."
+    )
 
     repeated = ScannerEngine(
         config, provider, tmp_path / "state", tmp_path / "output"
@@ -606,22 +614,126 @@ def test_supertrend_uses_signal_ticker_for_entries_and_execution_ticker_for_exit
     assert googl_trade["exitTimestamp"] == "2024-01-04"
     assert googl_trade["pnlValue"] > 0
 
-    arm_position = next(
-        position
-        for position in supertrend_strategy["virtualPositions"]
-        if position["signalTicker"] == "ARM"
+    arm_events = [
+        event for event in supertrend_strategy["events"] if event["signalTicker"] == "ARM"
+    ]
+    assert [event["eventType"] for event in arm_events] == ["skipped_entry"]
+    assert arm_events[0]["calculationTicker"] == "ARM"
+    assert arm_events[0]["holdSafetyTicker"] == "3ARM.L"
+    assert arm_events[0]["sourceOfTruth"] is False
+    assert arm_events[0]["reason"] == (
+        "Signal ticker BUY skipped because execution ticker was already out/red."
     )
-    assert arm_position["executionTicker"] == "3ARM.L"
-    assert arm_position["entryPrice"] == 403
-    assert arm_position["latestPrice"] == 406
-    assert arm_position["reason"] == (
-        "SuperTrend BUY on signal ticker; opened leveraged execution ticker."
+    assert not any(
+        position["signalTicker"] == "ARM"
+        for position in supertrend_strategy["virtualPositions"]
     )
 
     smh_events = [
         event for event in supertrend_strategy["events"] if event["signalTicker"] == "SMH"
     ]
     assert [event["calculationTicker"] for event in smh_events] == ["SMH", "3SMH.L"]
+
+
+def test_supertrend_gates_entries_by_execution_state_and_marks_skips(
+    tmp_path, monkeypatch
+):
+    patch_supertrend(
+        monkeypatch,
+        {
+            701: ["out", "out", "in", "in", "in"],
+            801: ["out", "in", "out", "out", "out"],
+            702: ["out", "out", "in", "in", "in"],
+            802: ["out", "out", "out", "out", "out"],
+            703: ["out", "in", "in", "in", "in"],
+            803: ["out", "in", "out", "out", "out"],
+            704: ["out", "in", "in", "in", "in"],
+            804: ["out", "in", "in", "in", "in"],
+        },
+    )
+    provider = Provider()
+    provider.values = {
+        "COIN": marker_bars(701, 5),
+        "3CON.L": marker_bars(801, 5),
+        "TSLA": marker_bars(702, 5),
+        "3TSL.L": marker_bars(802, 5),
+        "GOOGL": marker_bars(703, 5),
+        "3GOO.L": marker_bars(803, 5),
+        "SMH": marker_bars(704, 5),
+        "3SMH.L": marker_bars(804, 5),
+    }
+    config = validate_config(
+        configuration(
+            super_enabled=True,
+            sma_enabled=False,
+            supertrend_cost=0,
+            maximum_concurrent_positions=4,
+            watchlist=[
+                {
+                    "signalTicker": "COIN",
+                    "executionTicker": "3CON.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+                {
+                    "signalTicker": "TSLA",
+                    "executionTicker": "3TSL.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+                {
+                    "signalTicker": "GOOGL",
+                    "executionTicker": "3GOO.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+                {
+                    "signalTicker": "SMH",
+                    "executionTicker": "3SMH.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+            ],
+        )
+    )
+
+    snapshot = ScannerEngine(
+        config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan(rebuild_history=True)
+    supertrend_strategy = strategy(snapshot, "daily-supertrend")
+
+    by_signal = {
+        ticker: [
+            event
+            for event in supertrend_strategy["events"]
+            if event["signalTicker"] == ticker
+        ]
+        for ticker in {"COIN", "TSLA", "GOOGL", "SMH"}
+    }
+    assert [event["eventType"] for event in by_signal["COIN"]] == ["skipped_entry"]
+    assert by_signal["COIN"][0]["signalDate"] == "2024-01-03"
+    assert by_signal["COIN"][0]["calculationTicker"] == "COIN"
+    assert by_signal["COIN"][0]["holdSafetyTicker"] == "3CON.L"
+    assert by_signal["COIN"][0]["sourceOfTruth"] is False
+    assert by_signal["COIN"][0]["severity"] == "diagnostic"
+    assert by_signal["COIN"][0]["reason"] == (
+        "Signal ticker BUY skipped because execution ticker was already out/red."
+    )
+    assert [event["eventType"] for event in by_signal["TSLA"]] == ["skipped_entry"]
+    assert [event["eventType"] for event in by_signal["GOOGL"]] == [
+        "entry",
+        "exit",
+    ]
+    assert [event["eventType"] for event in by_signal["SMH"]] == ["entry"]
+
+    assert [
+        position["signalTicker"] for position in supertrend_strategy["virtualPositions"]
+    ] == ["SMH"]
+    assert supertrend_strategy["virtualPositions"][0]["executionTicker"] == "3SMH.L"
+    assert not any(
+        position["executionTicker"] in {"3CON.L", "3TSL.L", "3GOO.L"}
+        for position in supertrend_strategy["virtualPositions"]
+    )
 
 
 def test_supertrend_ignores_execution_buys_and_signal_sells(tmp_path, monkeypatch):
@@ -695,6 +807,7 @@ def test_supertrend_allocation_policies_and_concurrency(
             101: ["out", "in", "in", "in"],
             102: ["out", "in", "in", "in"],
             103: ["out", "out", "out", "out"],
+            10: ["out", "in", "in", "in"],
         },
     )
     provider = Provider()
@@ -959,7 +1072,7 @@ def test_sma_multi_ticker_exit_uses_signal_ticker_and_closes_execution(tmp_path)
 def test_performance_sanity_warnings_do_not_stop_scanner_output(
     tmp_path, monkeypatch
 ):
-    patch_supertrend(monkeypatch, {201: ["out", "in", "in"]})
+    patch_supertrend(monkeypatch, {201: ["out", "in", "in"], 0: ["out", "in", "in"]})
     provider = Provider()
     provider.values = {
         "SIG": bars([201, 202, 203], date(2026, 6, 18)),

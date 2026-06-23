@@ -451,6 +451,23 @@ test("strategy ticker chart renders bounded candle data and signal-date markers"
               price: 119,
               reason: "SuperTrend SELL on execution ticker.",
             },
+            {
+              eventId: "daily-supertrend:chart-skipped-entry",
+              strategyId: "daily-supertrend",
+              eventType: "skipped_entry",
+              occurredAt: "2026-06-22T09:00:00.000Z",
+              signalDate: "2026-06-18",
+              generatedAt: "2026-06-22T09:00:00.000Z",
+              signalTicker: "COIN",
+              executionTicker: "3USL.L",
+              calculationTicker: "COIN",
+              holdSafetyTicker: "3USL.L",
+              sourceOfTruth: false,
+              severity: "diagnostic",
+              price: 117,
+              reason:
+                "Signal ticker BUY skipped because execution ticker was already out/red.",
+            },
           ],
         }),
         strategy("nasdaq-sma200-3x", {
@@ -518,6 +535,8 @@ test("strategy ticker chart renders bounded candle data and signal-date markers"
   assert.match(html, /data-candle-count="250"/);
   assert.match(html, /SuperTrend entry/);
   assert.match(html, /SuperTrend exit/);
+  assert.doesNotMatch(html, /skipped_entry/);
+  assert.doesNotMatch(html, /Skipped entry/);
   assert.match(html, /SMA200 entry/);
   assert.match(html, /Manual buy/);
   assert.match(html, /Manual sell/);
