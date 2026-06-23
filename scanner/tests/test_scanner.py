@@ -158,7 +158,7 @@ def event_types(item):
 def patch_supertrend(monkeypatch, states_by_marker: dict[int, list[str]]):
     def fake_supertrend(signal_bars, _atr_period, _multiplier=None, **_kwargs):
         marker = int(signal_bars[0].close)
-        states = states_by_marker[marker]
+        states = states_by_marker.get(marker, ["out"] * len(signal_bars))
         return [
             SuperTrendPoint(
                 date=signal_bars[index].day.isoformat(),
@@ -466,12 +466,15 @@ def test_supertrend_rebuild_replays_historical_entries_exits_and_open_current(
 ):
     patch_supertrend(
         monkeypatch,
-        {101: ["out", "in", "in", "out", "out", "in"]},
+        {
+            101: ["out", "in", "out", "out", "out", "in"],
+            202: ["out", "in", "in", "out", "out", "out"],
+        },
     )
     provider = Provider()
     provider.values = {
         "SIGNAL": marker_bars(101, 6),
-        "EXEC": bars([10, 11, 12, 13, 14, 15]),
+        "EXEC": marker_bars(202, 6),
     }
     config = validate_config(configuration(super_enabled=True, sma_enabled=False))
     first = ScannerEngine(
@@ -481,7 +484,7 @@ def test_supertrend_rebuild_replays_historical_entries_exits_and_open_current(
     assert event_types(first_strategy) == ["entry", "exit", "entry"]
     assert len(first_strategy["closedVirtualTrades"]) == 1
     assert first_strategy["virtualPositions"][0]["entryTimestamp"] == "2024-01-06"
-    assert first_strategy["virtualPositions"][0]["latestPrice"] == 15
+    assert first_strategy["virtualPositions"][0]["latestPrice"] == 207
 
     repeated = ScannerEngine(
         config, provider, tmp_path / "state", tmp_path / "output"
@@ -497,6 +500,169 @@ def test_supertrend_rebuild_replays_historical_entries_exits_and_open_current(
     assert strategy(rebuilt, "daily-supertrend")["modelValue"] == pytest.approx(
         first_strategy["modelValue"]
     )
+
+
+def test_supertrend_uses_signal_ticker_for_entries_and_execution_ticker_for_exits(
+    tmp_path, monkeypatch
+):
+    patch_supertrend(
+        monkeypatch,
+        {
+            301: ["out", "in", "in", "in", "in"],
+            401: ["out", "in", "in", "out", "out"],
+            302: ["out", "in", "in", "in", "in"],
+            402: ["out", "out", "out", "out", "out"],
+            303: ["out", "in", "in", "in", "in"],
+            403: ["out", "in", "out", "out", "out"],
+        },
+    )
+    provider = Provider()
+    provider.values = {
+        "GOOGL": marker_bars(301, 5),
+        "3GOO.L": marker_bars(401, 5),
+        "ARM": marker_bars(302, 5),
+        "3ARM.L": marker_bars(402, 5),
+        "SMH": marker_bars(303, 5),
+        "3SMH.L": marker_bars(403, 5),
+    }
+    config = validate_config(
+        configuration(
+            super_enabled=True,
+            sma_enabled=False,
+            supertrend_cost=0,
+            maximum_concurrent_positions=3,
+            watchlist=[
+                {
+                    "signalTicker": "GOOGL",
+                    "executionTicker": "3GOO.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+                {
+                    "signalTicker": "ARM",
+                    "executionTicker": "3ARM.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+                {
+                    "signalTicker": "SMH",
+                    "executionTicker": "3SMH.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+            ],
+        )
+    )
+
+    snapshot = ScannerEngine(
+        config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan(rebuild_history=True)
+    supertrend_strategy = strategy(snapshot, "daily-supertrend")
+
+    googl_events = [
+        event
+        for event in supertrend_strategy["events"]
+        if event["signalTicker"] == "GOOGL"
+    ]
+    assert [event["eventType"] for event in googl_events] == ["entry", "exit"]
+    assert googl_events[0]["calculationTicker"] == "GOOGL"
+    assert googl_events[0]["reason"] == (
+        "SuperTrend BUY on signal ticker; opened leveraged execution ticker."
+    )
+    assert googl_events[1]["calculationTicker"] == "3GOO.L"
+    assert googl_events[1]["reason"] == (
+        "SuperTrend SELL on execution ticker; closed leveraged position."
+    )
+
+    googl_trade = next(
+        trade
+        for trade in supertrend_strategy["closedVirtualTrades"]
+        if trade["signalTicker"] == "GOOGL"
+    )
+    assert googl_trade["executionTicker"] == "3GOO.L"
+    assert googl_trade["entryPrice"] == 402
+    assert googl_trade["exitPrice"] == 404
+    assert googl_trade["exitTimestamp"] == "2024-01-04"
+    assert googl_trade["pnlValue"] > 0
+
+    arm_position = next(
+        position
+        for position in supertrend_strategy["virtualPositions"]
+        if position["signalTicker"] == "ARM"
+    )
+    assert arm_position["executionTicker"] == "3ARM.L"
+    assert arm_position["entryPrice"] == 403
+    assert arm_position["latestPrice"] == 406
+    assert arm_position["reason"] == (
+        "SuperTrend BUY on signal ticker; opened leveraged execution ticker."
+    )
+
+    smh_events = [
+        event for event in supertrend_strategy["events"] if event["signalTicker"] == "SMH"
+    ]
+    assert [event["calculationTicker"] for event in smh_events] == ["SMH", "3SMH.L"]
+
+
+def test_supertrend_ignores_execution_buys_and_signal_sells(tmp_path, monkeypatch):
+    patch_supertrend(
+        monkeypatch,
+        {
+            501: ["out", "out", "out", "out"],
+            601: ["out", "in", "in", "in"],
+            502: ["out", "in", "out", "out"],
+            602: ["out", "in", "in", "in"],
+        },
+    )
+    provider = Provider()
+    provider.values = {
+        "NOOPEN": marker_bars(501, 4),
+        "3NOOPEN.L": marker_bars(601, 4),
+        "SIGSELL": marker_bars(502, 4),
+        "3SIGSELL.L": marker_bars(602, 4),
+    }
+    config = validate_config(
+        configuration(
+            super_enabled=True,
+            sma_enabled=False,
+            supertrend_cost=0,
+            maximum_concurrent_positions=2,
+            watchlist=[
+                {
+                    "signalTicker": "NOOPEN",
+                    "executionTicker": "3NOOPEN.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+                {
+                    "signalTicker": "SIGSELL",
+                    "executionTicker": "3SIGSELL.L",
+                    "enabled": True,
+                    "allocationWeight": 1,
+                },
+            ],
+        )
+    )
+
+    snapshot = ScannerEngine(
+        config, provider, tmp_path / "state", tmp_path / "output"
+    ).scan(rebuild_history=True)
+    supertrend_strategy = strategy(snapshot, "daily-supertrend")
+
+    assert all(
+        event["signalTicker"] != "NOOPEN" for event in supertrend_strategy["events"]
+    )
+    sigsell_events = [
+        event
+        for event in supertrend_strategy["events"]
+        if event["signalTicker"] == "SIGSELL"
+    ]
+    assert [event["eventType"] for event in sigsell_events] == ["entry"]
+    assert sigsell_events[0]["calculationTicker"] == "SIGSELL"
+    assert not supertrend_strategy["closedVirtualTrades"]
+    assert [
+        position["executionTicker"]
+        for position in supertrend_strategy["virtualPositions"]
+    ] == ["3SIGSELL.L"]
 
 
 def test_supertrend_allocation_policies_and_concurrency(
