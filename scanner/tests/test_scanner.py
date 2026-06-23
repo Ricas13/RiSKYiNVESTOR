@@ -496,7 +496,15 @@ def test_supertrend_rebuild_replays_historical_entries_exits_and_open_current(
         event["eventId"]
         for event in strategy(repeated, "daily-supertrend")["events"]
     ] == [event["eventId"] for event in first_strategy["events"]]
-    assert strategy(rebuilt, "daily-supertrend")["events"] == first_strategy["events"]
+    rebuilt_events = strategy(rebuilt, "daily-supertrend")["events"]
+    assert [
+        {key: value for key, value in event.items() if key != "generatedAt"}
+        for event in rebuilt_events
+    ] == [
+        {key: value for key, value in event.items() if key != "generatedAt"}
+        for event in first_strategy["events"]
+    ]
+    assert all(event["signalDate"] != event["generatedAt"][:10] for event in rebuilt_events)
     assert strategy(rebuilt, "daily-supertrend")["modelValue"] == pytest.approx(
         first_strategy["modelValue"]
     )
@@ -566,13 +574,26 @@ def test_supertrend_uses_signal_ticker_for_entries_and_execution_ticker_for_exit
     ]
     assert [event["eventType"] for event in googl_events] == ["entry", "exit"]
     assert googl_events[0]["calculationTicker"] == "GOOGL"
+    assert googl_events[0]["signalDate"] == "2024-01-02"
+    assert googl_events[0]["generatedAt"] == snapshot["generatedAt"]
+    assert googl_events[0]["price"] == 402
     assert googl_events[0]["reason"] == (
         "SuperTrend BUY on signal ticker; opened leveraged execution ticker."
     )
     assert googl_events[1]["calculationTicker"] == "3GOO.L"
+    assert googl_events[1]["signalDate"] == "2024-01-04"
+    assert googl_events[1]["generatedAt"] == snapshot["generatedAt"]
+    assert googl_events[1]["price"] == 404
     assert googl_events[1]["reason"] == (
         "SuperTrend SELL on execution ticker; closed leveraged position."
     )
+    googl_chart = next(
+        item
+        for item in supertrend_strategy["chartData"]
+        if item["executionTicker"] == "3GOO.L"
+    )
+    assert len(googl_chart["candles"]) == 5
+    assert googl_chart["candles"][0]["date"] == "2024-01-01"
 
     googl_trade = next(
         trade
@@ -792,6 +813,10 @@ def test_sma_daily_and_weekly_cadence_are_historical_and_idempotent(tmp_path):
     daily_strategy = strategy(daily, "nasdaq-sma200-3x")
     assert daily_strategy["currentState"] == "risk_off"
     assert event_types(daily_strategy) == ["entry", "exit"]
+    assert all(event["signalDate"] for event in daily_strategy["events"])
+    assert all(event["generatedAt"] == daily["generatedAt"] for event in daily_strategy["events"])
+    assert daily_strategy["events"][0]["calculationTicker"] == "REFERENCE"
+    assert daily_strategy["chartData"][0]["executionTicker"] == "RISKON"
 
     weekly_config = validate_config(
         configuration(

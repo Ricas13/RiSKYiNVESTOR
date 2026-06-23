@@ -37,6 +37,8 @@ export interface SignalEvent {
   eventId: string;
   eventVersion: 1;
   occurredAt: string;
+  signalDate: string;
+  generatedAt: string;
   receivedAt: string;
   strategyId: string;
   strategyName: string;
@@ -45,6 +47,7 @@ export interface SignalEvent {
   underlyingName: string;
   tradeTicker: string;
   tradeName: string;
+  calculationTicker: string | null;
   signalState: SignalState;
   previousTrend: TrendState;
   currentTrend: TrendState;
@@ -243,6 +246,15 @@ function isoDate(value: unknown, field: string) {
   return parsed.toISOString();
 }
 
+function signalDateValue(value: unknown, field: string) {
+  const text = typeof value === "string" ? value.trim() : "";
+  const parsed = new Date(text);
+  if (!text || Number.isNaN(parsed.getTime())) {
+    throw new Error(`${field} must be a valid signal date.`);
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
 function nullableIsoDate(value: unknown, field: string) {
   if (value === null || value === undefined || value === "") return null;
   return isoDate(value, field);
@@ -360,6 +372,8 @@ export function validateCanonicalSignalEvent(value: unknown): SignalEvent {
     eventId: requiredText(input, "eventId", 200),
     eventVersion: 1,
     occurredAt: isoDate(input.occurredAt, "occurredAt"),
+    signalDate: signalDateValue(input.signalDate ?? input.occurredAt, "signalDate"),
+    generatedAt: isoDate(input.generatedAt ?? input.receivedAt, "generatedAt"),
     receivedAt: isoDate(input.receivedAt, "receivedAt"),
     strategyId: requiredText(input, "strategyId", 200),
     strategyName: requiredText(input, "strategyName", 300),
@@ -368,6 +382,8 @@ export function validateCanonicalSignalEvent(value: unknown): SignalEvent {
     underlyingName: requiredText(input, "underlyingName", 300),
     tradeTicker: requiredText(input, "tradeTicker", 100).toUpperCase(),
     tradeName: requiredText(input, "tradeName", 300),
+    calculationTicker:
+      optionalText(input.calculationTicker, 100).toUpperCase() || null,
     signalState: enumValue(input, "signalState", signalStates),
     previousTrend: enumValue(input, "previousTrend", trends),
     currentTrend: enumValue(input, "currentTrend", trends),
@@ -503,6 +519,14 @@ function migrateLegacySignalEvent(value: unknown): SignalEvent {
     eventId,
     eventVersion: 1,
     occurredAt,
+    signalDate: signalDateValue(input.signalDate ?? occurredAt, "signalDate"),
+    generatedAt: (() => {
+      try {
+        return isoDate(input.generatedAt ?? input.receivedAt ?? occurredAt, "generatedAt");
+      } catch {
+        return occurredAt;
+      }
+    })(),
     receivedAt: occurredAt,
     strategyId,
     strategyName:
@@ -514,6 +538,8 @@ function migrateLegacySignalEvent(value: unknown): SignalEvent {
       underlyingTicker,
     tradeTicker,
     tradeName: optionalText(input.tradeName, 300) || tradeTicker,
+    calculationTicker:
+      optionalText(input.calculationTicker, 100).toUpperCase() || null,
     signalState,
     previousTrend: legacyTrend(
       input.previousTrend ?? input.previousTrendState,

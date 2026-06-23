@@ -320,10 +320,27 @@ export interface MultiStrategyEvent {
   strategyId: StrategyId;
   eventType: StrategyEventType;
   occurredAt: string;
+  signalDate?: string;
+  generatedAt?: string;
   signalTicker: string;
   executionTicker: string;
   calculationTicker?: string;
+  price?: number;
   reason: string;
+}
+
+export interface StrategyChartCandle {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
+export interface StrategyChartData {
+  executionTicker: string;
+  candles: StrategyChartCandle[];
 }
 
 export interface ModelPerformanceWarning {
@@ -381,6 +398,7 @@ export interface MultiStrategyRecord {
   regimeChangeEvents?: MultiStrategyEvent[];
   latestEvent: MultiStrategyEvent | null;
   dataFreshness: string | null;
+  chartData?: StrategyChartData[];
   warnings?: ModelPerformanceWarning[];
   diagnostics?: Array<Record<string, unknown>>;
 }
@@ -452,6 +470,8 @@ export interface SignalEvent {
   eventId: string;
   eventVersion: 1;
   occurredAt: string;
+  signalDate?: string;
+  generatedAt?: string;
   receivedAt: string;
   strategyId: string;
   strategyName: string;
@@ -460,6 +480,7 @@ export interface SignalEvent {
   underlyingName: string;
   tradeTicker: string;
   tradeName: string;
+  calculationTicker?: string;
   signalState: SignalState;
   previousTrend: TrendState;
   currentTrend: TrendState;

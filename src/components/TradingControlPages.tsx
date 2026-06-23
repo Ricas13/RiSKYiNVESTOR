@@ -7,6 +7,10 @@ import {
   filterSignalEventsForAlertFilter,
   type SignalEventAlertFilter,
 } from "../utils/signalEventAlerts";
+import {
+  canonicalSignalDate,
+  sortCanonicalBySignalDate,
+} from "../utils/signalDates";
 import { ActualSummaryCards } from "./ActualSummaryCards";
 import { ClosedTradesTable } from "./ClosedTradesTable";
 import { DashboardCommandCentre } from "./DashboardCommandCentre";
@@ -21,6 +25,7 @@ import { NotificationHistory, SignalEventList } from "./SignalEvents";
 import { SignalComparison } from "./SignalComparison";
 import { SettingsPage } from "./SettingsPage";
 import { StrategyMonitor } from "./StrategyMonitor";
+import { StrategyTickerChart } from "./StrategyTickerChart";
 import { ExpandableRowsControls, SectionHeader } from "./ui";
 import { WealthDashboard } from "./WealthDashboard";
 
@@ -55,43 +60,66 @@ export function TradingControlPage({
   download: (path: string, filename: string) => Promise<void>;
   request: <T>(path: string) => Promise<T>;
 }) {
+  const [chartTicker, setChartTicker] = useState<string | null>(null);
+  const chart = (
+    <StrategyTickerChart
+      manualTrades={data.manualTrades.trades}
+      monitor={data.strategyMonitor}
+      onClose={() => setChartTicker(null)}
+      ticker={chartTicker}
+    />
+  );
+  const openTicker = (ticker: string) => setChartTicker(ticker);
+  let content;
   if (page === "signals") {
-    return <SignalsPage data={data} mutate={mutate} />;
-  }
-  if (page === "portfolio") {
-    return <PortfolioPage data={data} mutate={mutate} />;
-  }
-  if (page === "performance") return <PerformancePage data={data} />;
-  if (page === "trade-journal") {
-    return <TradeJournalPage data={data} mutate={mutate} />;
-  }
-  if (page === "strategies") {
-    return (
+    content = <SignalsPage data={data} mutate={mutate} onOpenTicker={openTicker} />;
+  } else if (page === "portfolio") {
+    content = <PortfolioPage data={data} mutate={mutate} />;
+  } else if (page === "performance") {
+    content = <PerformancePage data={data} onOpenTicker={openTicker} />;
+  } else if (page === "trade-journal") {
+    content = <TradeJournalPage data={data} mutate={mutate} />;
+  } else if (page === "strategies") {
+    content = (
       <StrategyMonitor
-        monitor={data.strategyMonitor}
-        refresh={() => mutate("/scanner/refresh", "POST")}
         canRefresh={session.role === "owner" || session.role === "admin"}
+        monitor={data.strategyMonitor}
+        onOpenTicker={openTicker}
+        refresh={() => mutate("/scanner/refresh", "POST")}
       />
     );
-  }
-  if (page === "alerts") return <AlertsPage data={data} mutate={mutate} />;
-  if (page === "settings") {
-    return (
+  } else if (page === "alerts") {
+    content = <AlertsPage data={data} mutate={mutate} onOpenTicker={openTicker} />;
+  } else if (page === "settings") {
+    content = (
       <SettingsPage
-        notifications={data.notifications}
-        strategyConfiguration={data.strategyConfiguration}
-        session={session}
         dataStatus={data.dataStatus}
-        mutate={mutate}
         download={download}
+        mutate={mutate}
+        notifications={data.notifications}
         request={request}
+        session={session}
+        strategyConfiguration={data.strategyConfiguration}
       />
     );
+  } else {
+    content = <ControlDashboard data={data} onOpenTicker={openTicker} />;
   }
-  return <ControlDashboard data={data} />;
+  return (
+    <>
+      {content}
+      {chart}
+    </>
+  );
 }
 
-function ControlDashboard({ data }: { data: DashboardData }) {
+function ControlDashboard({
+  data,
+  onOpenTicker,
+}: {
+  data: DashboardData;
+  onOpenTicker: (ticker: string) => void;
+}) {
   return (
     <div className="control-page-stack control-room-page dashboard-page-stack">
       <PageHeading
@@ -99,12 +127,20 @@ function ControlDashboard({ data }: { data: DashboardData }) {
         title="Signal control room"
         copy="Daily command centre for scanner health, recent signal changes, current model positions and manual action review."
       />
-      <DashboardCommandCentre data={data} />
+      <DashboardCommandCentre data={data} onOpenTicker={onOpenTicker} />
     </div>
   );
 }
 
-function SignalsPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) {
+function SignalsPage({
+  data,
+  mutate,
+  onOpenTicker,
+}: {
+  data: DashboardData;
+  mutate: Mutate;
+  onOpenTicker: (ticker: string) => void;
+}) {
   const comparisonSignals = data.signalEvents.events.map((event) => ({
     id: event.eventId,
     strategyName: event.strategyName,
@@ -118,7 +154,7 @@ function SignalsPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) 
           : ("HOLD" as const),
     underlyingTicker: event.underlyingTicker,
     tradeTicker: event.tradeTicker,
-    signalDate: event.occurredAt.slice(0, 10),
+    signalDate: canonicalSignalDate(event),
     suggestedAction: event.reasonText,
     riskTier: event.riskTier,
     suggestedAllocation: `${event.allocationPercent}% · ${event.allocationStatus}`,
@@ -140,7 +176,7 @@ function SignalsPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) 
         title="Ticker-pair signal control table"
         copy="Review current SuperTrend ticker-pair status, weekly reversals, open virtual positions and scanner freshness from the latest scanner snapshot."
       />
-      <ScannerSignalMonitor monitor={data.strategyMonitor} />
+      <ScannerSignalMonitor monitor={data.strategyMonitor} onOpenTicker={onOpenTicker} />
       <SignalAuditTrail
         events={data.signalEvents.events}
         deliveries={data.notifications.deliveries}
@@ -149,6 +185,7 @@ function SignalsPage({ data, mutate }: { data: DashboardData; mutate: Mutate }) 
             acknowledged: true,
           }).then(() => undefined)
         }
+        onOpenTicker={onOpenTicker}
       />
       <SectionHeader
         eyebrow="Decision audit"
@@ -187,10 +224,12 @@ function SignalAuditTrail({
   events,
   deliveries,
   onAcknowledge,
+  onOpenTicker,
 }: {
   events: DashboardData["signalEvents"]["events"];
   deliveries: DashboardData["notifications"]["deliveries"];
   onAcknowledge: (event: DashboardData["signalEvents"]["events"][number]) => Promise<void>;
+  onOpenTicker: (ticker: string) => void;
 }) {
   const [filter, setFilter] = useState<AuditTrailFilter>("all");
   const filtered = useMemo(
@@ -243,6 +282,7 @@ function SignalAuditTrail({
         deliveries={deliveries}
         emptyCopy="No matching scanner audit events."
         onAcknowledge={onAcknowledge}
+        onOpenTicker={onOpenTicker}
       />
     </section>
   );
@@ -252,9 +292,7 @@ function filterAuditTrailEvents(
   events: DashboardData["signalEvents"]["events"],
   filter: AuditTrailFilter,
 ) {
-  const sorted = [...events].sort((a, b) =>
-    b.occurredAt.localeCompare(a.occurredAt),
-  );
+  const sorted = [...events].sort(sortCanonicalBySignalDate);
   if (filter === "entries") {
     return sorted.filter((event) => event.signalState === "actionable_entry");
   }
@@ -270,13 +308,13 @@ function filterAuditTrailEvents(
     return sorted.filter((event) => event.signalState === "scanner_error");
   }
   if (filter === "current-week") {
-    const anchor = parseDate(sorted[0]?.occurredAt) ?? new Date();
+    const anchor = parseDate(canonicalSignalDate(sorted[0])) ?? new Date();
     const weekStart = new Date(
       Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), anchor.getUTCDate()),
     );
     weekStart.setUTCDate(weekStart.getUTCDate() - ((weekStart.getUTCDay() + 6) % 7));
     return sorted.filter((event) => {
-      const occurred = parseDate(event.occurredAt);
+      const occurred = parseDate(canonicalSignalDate(event));
       return Boolean(occurred && occurred >= weekStart);
     });
   }
@@ -351,7 +389,13 @@ function PortfolioPage({ data, mutate }: { data: DashboardData; mutate: Mutate }
   );
 }
 
-function PerformancePage({ data }: { data: DashboardData }) {
+function PerformancePage({
+  data,
+  onOpenTicker,
+}: {
+  data: DashboardData;
+  onOpenTicker: (ticker: string) => void;
+}) {
   const hasLegacyActualPerformance =
     data.performance.closedTrades > 0 ||
     data.performance.realisedSeries.length > 0 ||
@@ -380,7 +424,11 @@ function PerformancePage({ data }: { data: DashboardData }) {
           </p>
         </article>
       </section>
-      <StrategyMonitor monitor={data.strategyMonitor} showHeading={false} />
+      <StrategyMonitor
+        monitor={data.strategyMonitor}
+        onOpenTicker={onOpenTicker}
+        showHeading={false}
+      />
       {hasLegacyActualPerformance && (
         <details className="legacy-performance-details">
           <summary>Historical actual trade performance records</summary>
@@ -443,9 +491,11 @@ function emptyAlertFilterCopy(filter: SignalEventAlertFilter) {
 function AlertsPage({
   data,
   mutate,
+  onOpenTicker,
 }: {
   data: DashboardData;
   mutate: Mutate;
+  onOpenTicker: (ticker: string) => void;
 }) {
   const [filter, setFilter] = useState<SignalEventAlertFilter>("current");
   const alertContext = useMemo(
@@ -551,6 +601,7 @@ function AlertsPage({
         emptyCopy={emptyAlertFilterCopy(filter)}
         eventMeta={(event) => classifySignalEventAlert(event, alertContext)}
         onAcknowledge={(event) => acknowledgeEvent(event.eventId)}
+        onOpenTicker={onOpenTicker}
       />
       <SectionHeader
         eyebrow="Notifications"
@@ -580,22 +631,24 @@ function GroupedAlertEventList({
   emptyCopy,
   eventMeta,
   onAcknowledge,
+  onOpenTicker,
 }: {
   events: DashboardData["signalEvents"]["events"];
   deliveries: DashboardData["notifications"]["deliveries"];
   emptyCopy: string;
   eventMeta: (event: DashboardData["signalEvents"]["events"][number]) => ReturnType<typeof classifySignalEventAlert>;
   onAcknowledge: (event: DashboardData["signalEvents"]["events"][number]) => Promise<void>;
+  onOpenTicker: (ticker: string) => void;
 }) {
   const sorted = useMemo(
-    () => [...events].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)),
+    () => [...events].sort(sortCanonicalBySignalDate),
     [events],
   );
   const expandable = useExpandableRows(sorted, { expandedLimit: 50 });
   if (!events.length) return <div className="empty-state">{emptyCopy}</div>;
   const groups = new Map<string, DashboardData["signalEvents"]["events"]>();
   for (const event of expandable.visibleRows) {
-    const key = event.occurredAt.slice(0, 10) || "Unknown date";
+    const key = canonicalSignalDate(event) || "Unknown date";
     groups.set(key, [...(groups.get(key) ?? []), event]);
   }
   return (
@@ -616,6 +669,7 @@ function GroupedAlertEventList({
               deliveries={deliveries}
               eventMeta={eventMeta}
               onAcknowledge={onAcknowledge}
+              onOpenTicker={onOpenTicker}
             />
           </section>
         ))}

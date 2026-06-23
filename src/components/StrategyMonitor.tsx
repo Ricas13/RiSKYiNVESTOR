@@ -28,6 +28,7 @@ import {
   affectedTickerText,
   collectStrategyPerformanceWarnings,
 } from "../utils/modelWarnings";
+import { sortStrategyBySignalDate, strategySignalDate } from "../utils/signalDates";
 import { Badge, ExpandableRowsControls } from "./ui";
 
 type MonitorTab = "all" | StrategyId;
@@ -37,11 +38,13 @@ export function StrategyMonitor({
   refresh,
   canRefresh = false,
   showHeading = true,
+  onOpenTicker,
 }: {
   monitor: MultiStrategyPublicState;
   refresh?: () => Promise<unknown>;
   canRefresh?: boolean;
   showHeading?: boolean;
+  onOpenTicker?: (ticker: string) => void;
 }) {
   const [tab, setTab] = useState<MonitorTab>("all");
   const [busy, setBusy] = useState(false);
@@ -162,7 +165,11 @@ export function StrategyMonitor({
       </div>
 
       {strategies.map((strategy) => (
-        <StrategySection key={strategy.strategyId} strategy={strategy} />
+        <StrategySection
+          key={strategy.strategyId}
+          onOpenTicker={onOpenTicker}
+          strategy={strategy}
+        />
       ))}
 
       {message && <div className="form-message">{message}</div>}
@@ -208,7 +215,13 @@ function MonitorHeading({
   );
 }
 
-function StrategySection({ strategy }: { strategy: MultiStrategyRecord }) {
+function StrategySection({
+  strategy,
+  onOpenTicker,
+}: {
+  strategy: MultiStrategyRecord;
+  onOpenTicker?: (ticker: string) => void;
+}) {
   const latestEvent = strategy.latestEvent;
   const warnings = collectStrategyPerformanceWarnings(strategy);
   return (
@@ -366,10 +379,10 @@ function StrategySection({ strategy }: { strategy: MultiStrategyRecord }) {
       </div>
 
       {strategy.strategyId === "daily-supertrend" ? (
-        <SuperTrendWatchlist strategy={strategy} />
+        <SuperTrendWatchlist strategy={strategy} onOpenTicker={onOpenTicker} />
       ) : (
         <>
-          <Sma200Watchlist strategy={strategy} />
+          <Sma200Watchlist strategy={strategy} onOpenTicker={onOpenTicker} />
           <RegimeHistory strategy={strategy} />
         </>
       )}
@@ -501,8 +514,10 @@ function VirtualPositions({ strategy }: { strategy: MultiStrategyRecord }) {
 
 function SuperTrendWatchlist({
   strategy,
+  onOpenTicker,
 }: {
   strategy: MultiStrategyRecord;
+  onOpenTicker?: (ticker: string) => void;
 }) {
   const rows = Array.isArray(strategy.parameters.watchlist)
     ? strategy.parameters.watchlist.filter(
@@ -558,6 +573,10 @@ function SuperTrendWatchlist({
                     <td>{row.enabled === true ? "Yes" : "No"}</td>
                     <td>
                       {signalTicker || "—"} → {executionTicker || "—"}
+                      <TickerChartButton
+                        onOpenTicker={onOpenTicker}
+                        ticker={executionTicker}
+                      />
                     </td>
                     <td>{position?.state ?? "out"}</td>
                     <td>
@@ -599,7 +618,13 @@ function SuperTrendWatchlist({
   );
 }
 
-function Sma200Watchlist({ strategy }: { strategy: MultiStrategyRecord }) {
+function Sma200Watchlist({
+  strategy,
+  onOpenTicker,
+}: {
+  strategy: MultiStrategyRecord;
+  onOpenTicker?: (ticker: string) => void;
+}) {
   const rows = Array.isArray(strategy.parameters.watchlist)
     ? strategy.parameters.watchlist.filter(
         (value): value is Record<string, unknown> =>
@@ -666,6 +691,10 @@ function Sma200Watchlist({ strategy }: { strategy: MultiStrategyRecord }) {
                     <td>{row.enabled === true ? "Yes" : "No"}</td>
                     <td>
                       {signalTicker || "—"} → {executionTicker || "—"}
+                      <TickerChartButton
+                        onOpenTicker={onOpenTicker}
+                        ticker={executionTicker}
+                      />
                     </td>
                     <td>{position ? "risk_on" : "risk_off"}</td>
                     <td>
@@ -709,7 +738,7 @@ function Sma200Watchlist({ strategy }: { strategy: MultiStrategyRecord }) {
 
 function RegimeHistory({ strategy }: { strategy: MultiStrategyRecord }) {
   const allEvents = [...(strategy.regimeChangeEvents ?? strategy.events)].sort(
-    (a, b) => b.occurredAt.localeCompare(a.occurredAt),
+    sortStrategyBySignalDate,
   );
   const expandable = useExpandableRows(allEvents);
   return (
@@ -737,7 +766,7 @@ function RegimeHistory({ strategy }: { strategy: MultiStrategyRecord }) {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Occurred</th>
+                <th>Signal date</th>
                 <th>State change</th>
                 <th>Reference → execution</th>
                 <th>Reason</th>
@@ -746,7 +775,7 @@ function RegimeHistory({ strategy }: { strategy: MultiStrategyRecord }) {
             <tbody>
               {expandable.visibleRows.map((event) => (
                 <tr key={event.eventId}>
-                  <td>{formatDateTime(event.occurredAt)}</td>
+                  <td>{strategySignalDate(event) ?? event.occurredAt}</td>
                   <td>{event.eventType === "entry" ? "Risk on" : "Risk off"}</td>
                   <td>
                     {event.signalTicker} → {event.executionTicker}
@@ -831,6 +860,25 @@ function ClosedVirtualTrades({
         </>
       )}
     </article>
+  );
+}
+
+function TickerChartButton({
+  ticker,
+  onOpenTicker,
+}: {
+  ticker: string;
+  onOpenTicker?: (ticker: string) => void;
+}) {
+  if (!ticker || !onOpenTicker) return null;
+  return (
+    <button
+      className="ticker-chart-link"
+      onClick={() => onOpenTicker(ticker)}
+      type="button"
+    >
+      Open chart
+    </button>
   );
 }
 

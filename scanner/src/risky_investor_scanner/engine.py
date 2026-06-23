@@ -54,6 +54,7 @@ class ScannerEngine:
                 scanner_error = _event(event_id(strategy_id, 'scannerError', generated_at[:10], 'SCANNER'), strategy_id, 'scannerError', generated_at, 'SCANNER', 'SCANNER', safe_message)
                 strategies[-1]['events'] = [scanner_error]
                 strategies[-1]['latestEvent'] = scanner_error
+        _attach_generated_at(strategies, generated_at)
         has_strategy_errors = bool(errors)
         rebuild_required = [item for item in strategies if item.get('status') == 'rebuild_required']
         for item in rebuild_required:
@@ -216,7 +217,7 @@ class ScannerEngine:
                     positions[row_key] = position
                     cash = max(0.0, cash - allocation)
                     identifier = event_id(SUPER_ID, 'entry', opened, row_key)
-                    events.append(_event(identifier, SUPER_ID, 'entry', opened, row.signal_ticker, row.execution_ticker, 'SuperTrend BUY on signal ticker; opened leveraged execution ticker.', calculation_ticker=transition['calculationTicker']))
+                    events.append(_event(identifier, SUPER_ID, 'entry', opened, row.signal_ticker, row.execution_ticker, 'SuperTrend BUY on signal ticker; opened leveraged execution ticker.', calculation_ticker=transition['calculationTicker'], price=execution_bar.close))
                 elif transition['action'] == 'exit' and row_key in positions:
                     position = positions[row_key]
                     proceeds = position['quantity'] * execution_bar.close
@@ -229,14 +230,14 @@ class ScannerEngine:
                     cash += proceeds
                     del positions[row_key]
                     identifier = event_id(SUPER_ID, 'exit', closed_at, row_key)
-                    events.append(_event(identifier, SUPER_ID, 'exit', closed_at, row.signal_ticker, row.execution_ticker, 'SuperTrend SELL on execution ticker; closed leveraged position.', calculation_ticker=transition['calculationTicker']))
+                    events.append(_event(identifier, SUPER_ID, 'exit', closed_at, row.signal_ticker, row.execution_ticker, 'SuperTrend SELL on execution ticker; closed leveraged position.', calculation_ticker=transition['calculationTicker'], price=execution_bar.close))
             invested = _refresh_supertrend_positions(positions, row_data, current_day)
             equity.append({'date': current_day.isoformat(), 'value': cash + invested})
         invested = _refresh_supertrend_positions(positions, row_data, sorted(market_days)[-1])
         model_value = cash + invested
         peak = max((item['value'] for item in equity))
         durable = {'configFingerprint': fingerprint, 'rebuildRequired': False, 'capital': config.model_starting_capital, 'cash': cash, 'investedValue': invested, 'modelValue': model_value, 'returnPercent': (model_value / config.model_starting_capital - 1) * 100, 'drawdownPercent': (model_value / peak - 1) * 100, 'exposurePercent': invested / max(model_value, 1e-06) * 100, 'positions': positions, 'closed': closed, 'equity': _dedupe_equity(equity), 'events': events, 'dataFreshness': max(freshness) if freshness else None, 'currentState': 'in_market' if positions else 'out_of_market', 'warnings': [], 'diagnostics': diagnostics[-100:]}
-        result.update({'status': 'current', 'currentState': durable['currentState'], 'modelValue': durable['modelValue'], 'returnPercent': durable['returnPercent'], 'drawdownPercent': durable['drawdownPercent'], 'exposurePercent': durable['exposurePercent'], 'cash': durable['cash'], 'investedValue': durable['investedValue'], 'equitySnapshots': durable['equity'], 'virtualPositions': list(positions.values()), 'closedVirtualTrades': closed, 'events': events, 'latestEvent': events[-1] if events else None, 'dataFreshness': durable['dataFreshness'], 'diagnostics': durable['diagnostics']})
+        result.update({'status': 'current', 'currentState': durable['currentState'], 'modelValue': durable['modelValue'], 'returnPercent': durable['returnPercent'], 'drawdownPercent': durable['drawdownPercent'], 'exposurePercent': durable['exposurePercent'], 'cash': durable['cash'], 'investedValue': durable['investedValue'], 'equitySnapshots': durable['equity'], 'virtualPositions': list(positions.values()), 'closedVirtualTrades': closed, 'events': events, 'latestEvent': events[-1] if events else None, 'dataFreshness': durable['dataFreshness'], 'diagnostics': durable['diagnostics'], 'chartData': _chart_data_from_rows(row_data)})
         _apply_performance_warnings(result, self.config.sanity, quality_warnings)
         durable['positions'] = {
             _row_key(
@@ -457,6 +458,12 @@ class ScannerEngine:
                 'regimeChangeEvents': events,
                 'latestEvent': latest_event,
                 'dataFreshness': data_freshness,
+                'chartData': _chart_data_from_price_histories(
+                    {
+                        row.execution_ticker: price_histories.get(row.execution_ticker, [])
+                        for row in rows
+                    }
+                ),
             }
         )
         _apply_performance_warnings(result, self.config.sanity, quality_warnings)
@@ -466,8 +473,66 @@ class ScannerEngine:
         self.state.setdefault('strategies', {})[SMA_ID] = durable
         return result
 
-def _event(identifier: str, strategy_id: str, event_type: str, occurred_at: str, signal_ticker: str, execution_ticker: str, reason: str, *, calculation_ticker: str | None = None) -> dict[str, Any]:
-    return {'eventId': identifier, 'strategyId': strategy_id, 'eventType': event_type, 'occurredAt': occurred_at, 'signalTicker': signal_ticker, 'executionTicker': execution_ticker, 'calculationTicker': calculation_ticker or signal_ticker, 'reason': reason}
+def _event(identifier: str, strategy_id: str, event_type: str, occurred_at: str, signal_ticker: str, execution_ticker: str, reason: str, *, calculation_ticker: str | None = None, price: float | None = None) -> dict[str, Any]:
+    event = {'eventId': identifier, 'strategyId': strategy_id, 'eventType': event_type, 'occurredAt': occurred_at, 'signalDate': _signal_date(occurred_at), 'signalTicker': signal_ticker, 'executionTicker': execution_ticker, 'calculationTicker': calculation_ticker or signal_ticker, 'reason': reason}
+    if price is not None:
+        event['price'] = price
+    return event
+
+def _signal_date(value: str | None) -> str:
+    if not value:
+        return date.today().isoformat()
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).date().isoformat()
+    except ValueError:
+        return value[:10]
+
+def _attach_generated_at(strategies: list[dict[str, Any]], generated_at: str) -> None:
+    for strategy in strategies:
+        for collection_name in ('events', 'regimeChangeEvents'):
+            events = strategy.get(collection_name)
+            if isinstance(events, list):
+                for event in events:
+                    if isinstance(event, dict):
+                        event['signalDate'] = event.get('signalDate') or _signal_date(str(event.get('occurredAt', '')))
+                        event['generatedAt'] = event.get('generatedAt') or generated_at
+                        event['calculationTicker'] = event.get('calculationTicker') or event.get('signalTicker')
+        latest = strategy.get('latestEvent')
+        if isinstance(latest, dict):
+            latest['signalDate'] = latest.get('signalDate') or _signal_date(str(latest.get('occurredAt', '')))
+            latest['generatedAt'] = latest.get('generatedAt') or generated_at
+            latest['calculationTicker'] = latest.get('calculationTicker') or latest.get('signalTicker')
+
+def _chart_data_from_rows(row_data: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return _chart_data_from_price_histories(
+        {
+            str(value['row'].execution_ticker): value.get('executionBars', [])
+            for value in row_data.values()
+        }
+    )
+
+def _chart_data_from_price_histories(price_histories: dict[str, list[PriceBar]], limit: int = 250) -> list[dict[str, Any]]:
+    chart_data: list[dict[str, Any]] = []
+    for ticker, bars in sorted(price_histories.items()):
+        if not ticker or not bars:
+            continue
+        chart_data.append(
+            {
+                'executionTicker': ticker,
+                'candles': [
+                    {
+                        'date': bar.day.isoformat(),
+                        'open': bar.open,
+                        'high': bar.high,
+                        'low': bar.low,
+                        'close': bar.close,
+                        'volume': bar.volume,
+                    }
+                    for bar in bars[-limit:]
+                ],
+            }
+        )
+    return chart_data
 
 def _supertrend_diagnostic(row: WatchlistRow, point: Any, previous_state: str, calculation_ticker: str) -> dict[str, Any]:
     return {
@@ -863,9 +928,11 @@ def _scan_sma_row(
             desired = 'risk_off'
         desired_ticker = row.execution_ticker if desired == 'risk_on' else risk_off_ticker
         if desired != state or desired_ticker != current_ticker:
+            event_price: float | None = None
             if current_ticker and quantity > 0 and entry_price is not None:
                 price_bar = _price_on_or_before(price_histories[current_ticker], day)
                 if price_bar is not None:
+                    event_price = price_bar.close
                     proceeds = quantity * price_bar.close
                     proceeds -= proceeds * config.transaction_cost_percent / 100
                     pnl = proceeds - allocation
@@ -908,6 +975,7 @@ def _scan_sma_row(
             if desired_ticker:
                 price_bar = _price_on_or_before(price_histories[desired_ticker], day)
                 if price_bar is not None and cash > 0:
+                    event_price = price_bar.close
                     allocation = cash
                     cost = allocation * config.transaction_cost_percent / 100
                     quantity = max(0.0, (allocation - cost) / price_bar.close)
@@ -931,6 +999,8 @@ def _scan_sma_row(
                         f'{config.sma_length}-day average; model '
                         f"{'holds ' + row.execution_ticker if desired == 'risk_on' else 'moves to cash'}."
                     ),
+                    calculation_ticker=row.signal_ticker,
+                    price=event_price,
                 )
             )
         invested = _position_value(price_histories, current_ticker, quantity, day)

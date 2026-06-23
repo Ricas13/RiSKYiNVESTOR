@@ -299,6 +299,11 @@ function canonicalStrategyEvent(event: MultiStrategyEvent) {
     eventId: event.eventId,
     eventVersion: 1,
     occurredAt: new Date(event.occurredAt).toISOString(),
+    signalDate: event.signalDate,
+    generatedAt:
+      event.generatedAt && !Number.isNaN(new Date(event.generatedAt).getTime())
+        ? new Date(event.generatedAt).toISOString()
+        : new Date(event.occurredAt).toISOString(),
     receivedAt: new Date().toISOString(),
     strategyId: event.strategyId,
     strategyName,
@@ -307,6 +312,7 @@ function canonicalStrategyEvent(event: MultiStrategyEvent) {
     underlyingName: event.signalTicker,
     tradeTicker: event.executionTicker,
     tradeName: event.executionTicker,
+    calculationTicker: event.calculationTicker ?? null,
     signalState,
     previousTrend: actionableEntry
       ? "red"

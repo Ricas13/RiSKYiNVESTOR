@@ -3,6 +3,7 @@ import type {
   ScannerImportState,
   SignalEvent,
 } from "../types";
+import { canonicalSignalDate } from "./signalDates";
 
 export type SignalEventAlertFilter =
   | "current"
@@ -104,7 +105,7 @@ function isSignalEventStale(
   event: SignalEvent,
   context: SignalEventAlertContext,
 ) {
-  const eventDate = parseDate(event.occurredAt);
+  const eventDate = parseDate(canonicalSignalDate(event));
   const anchorDate = parseDate(context.scannerGeneratedAt) ?? new Date();
   if (!eventDate) return true;
 

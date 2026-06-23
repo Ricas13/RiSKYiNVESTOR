@@ -360,7 +360,7 @@ test("large strategy event history is bounded for import and public control-room
   value.scanner.errors = Array.from({ length: 50 }, (_, index) => ({
     message: `Scanner error ${index}`,
   }));
-  value.scanner.warnings = Array.from({ length: 80 }, (_, index) => ({
+    value.scanner.warnings = Array.from({ length: 80 }, (_, index) => ({
     ...warning,
     code: `scanner_warning_${index}`,
   }));
@@ -369,8 +369,14 @@ test("large strategy event history is bounded for import and public control-room
     strategyId: "nasdaq-sma200-3x",
     eventType: index % 2 === 0 ? "entry" : "exit",
     occurredAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+    signalDate: new Date(Date.UTC(2026, 0, 1, 0, index))
+      .toISOString()
+      .slice(0, 10),
+    generatedAt: "2026-06-20T08:00:00.000Z",
     signalTicker: "QQQ.US",
     executionTicker: "QQQ3.UK",
+    calculationTicker: "QQQ.US",
+    price: 100 + index,
     reason: `Historical SMA event ${index}.`,
   }));
   value.strategies[1].events = manyEvents;
@@ -402,6 +408,19 @@ test("large strategy event history is bounded for import and public control-room
       value: 10_000 + index,
     }),
   );
+  value.strategies[1].chartData = [
+    {
+      executionTicker: "QQQ3.UK",
+      candles: Array.from({ length: 1_000 }, (_, index) => ({
+        date: new Date(Date.UTC(2023, 0, 1 + index)).toISOString().slice(0, 10),
+        open: 100 + index,
+        high: 101 + index,
+        low: 99 + index,
+        close: 100 + index,
+        volume: 1_000_000,
+      })),
+    },
+  ];
   const valid = validateMultiStrategySnapshot(value);
   const originalEventCount = valid.strategies[1].events.length;
   const importCandidates = selectStrategyEventImportCandidates(valid, 500);
@@ -428,8 +447,11 @@ test("large strategy event history is bounded for import and public control-room
     "nasdaq-sma200-3x:history:10049",
   );
   assert.equal(publicState.snapshot.strategies[1].events.length, 250);
+  assert.equal(publicState.snapshot.strategies[1].events[0].signalDate, "2026-01-07");
+  assert.equal(publicState.snapshot.strategies[1].events[0].generatedAt, "2026-06-20T08:00:00.000Z");
   assert.equal(publicState.snapshot.strategies[1].closedVirtualTrades.length, 100);
   assert.equal(publicState.snapshot.strategies[1].equitySnapshots.length, 500);
+  assert.equal(publicState.snapshot.strategies[1].chartData[0].candles.length, 250);
   assert.equal(publicState.snapshot.strategies[1].warnings.length, 50);
   assert.equal(publicState.snapshot.scanner.errors.length, 25);
   assert.equal(publicState.snapshot.scanner.warnings.length, 50);

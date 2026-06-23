@@ -25,11 +25,17 @@ import {
   type DashboardActionItem,
   type DashboardActionType,
 } from "../utils/dashboardCommandCentre";
-import { formatDateTime, formatMoney, formatNumber } from "../utils/format";
+import { formatDate, formatDateTime, formatMoney, formatNumber } from "../utils/format";
 import { SignalEventList } from "./SignalEvents";
 import { Badge, SectionHeader } from "./ui";
 
-export function DashboardCommandCentre({ data }: { data: DashboardData }) {
+export function DashboardCommandCentre({
+  data,
+  onOpenTicker,
+}: {
+  data: DashboardData;
+  onOpenTicker?: (ticker: string) => void;
+}) {
   const model = buildDashboardCommandCentreModel(data);
   const actualTradeEquity = buildActualTradeEquityModel(
     data.manualTrades.trades,
@@ -57,8 +63,11 @@ export function DashboardCommandCentre({ data }: { data: DashboardData }) {
   return (
     <div className="dashboard-command-centre">
       <ScannerHealthStrip model={model} />
-      <ActionNeededPanel items={model.actionItems} />
-      <CurrentModelPositionsPanel positions={model.currentModelPositions} />
+      <ActionNeededPanel items={model.actionItems} onOpenTicker={onOpenTicker} />
+      <CurrentModelPositionsPanel
+        onOpenTicker={onOpenTicker}
+        positions={model.currentModelPositions}
+      />
       <ActualTradeEquityPanel model={actualTradeEquity} />
       <section className="dashboard-command-grid">
         <SuperTrendSummaryCard summary={model.superTrend} />
@@ -85,6 +94,7 @@ export function DashboardCommandCentre({ data }: { data: DashboardData }) {
           limit={5}
           compact
           emptyCopy="No recent signal history has been imported."
+          onOpenTicker={onOpenTicker}
         />
       </section>
     </div>
@@ -147,7 +157,13 @@ function ScannerHealthStrip({
   );
 }
 
-function ActionNeededPanel({ items }: { items: DashboardActionItem[] }) {
+function ActionNeededPanel({
+  items,
+  onOpenTicker,
+}: {
+  items: DashboardActionItem[];
+  onOpenTicker?: (ticker: string) => void;
+}) {
   return (
     <section className="control-actions dashboard-action-needed">
       <div className="control-actions__heading">
@@ -187,13 +203,20 @@ function ActionNeededPanel({ items }: { items: DashboardActionItem[] }) {
                   <td>{item.strategyName}</td>
                   <td>
                     <strong>{item.signalTicker}</strong> → {item.executionTicker}
+                    <TickerChartButton
+                      onOpenTicker={onOpenTicker}
+                      ticker={item.executionTicker}
+                    />
                   </td>
                   <td>
                     <Badge tone={actionTone(item.eventType)}>
                       {actionLabel(item.eventType)}
                     </Badge>
                   </td>
-                  <td>{formatDateTime(item.occurredAt)}</td>
+                  <td>
+                    <strong>Signal date: {formatOptionalDate(item.signalDate)}</strong>
+                    <small>Generated: {formatOptionalDateTime(item.generatedAt)}</small>
+                  </td>
                   <td>{item.reason}</td>
                   <td>{item.modelPositionOpen ? "open" : "none"}</td>
                 </tr>
@@ -219,10 +242,12 @@ function ActionNeededPanel({ items }: { items: DashboardActionItem[] }) {
 
 function CurrentModelPositionsPanel({
   positions,
+  onOpenTicker,
 }: {
   positions: ReturnType<
     typeof buildDashboardCommandCentreModel
   >["currentModelPositions"];
+  onOpenTicker?: (ticker: string) => void;
 }) {
   return (
     <section className="control-panel">
@@ -256,6 +281,10 @@ function CurrentModelPositionsPanel({
                   <td>
                     <strong>{position.signalTicker}</strong> →{" "}
                     {position.executionTicker}
+                    <TickerChartButton
+                      onOpenTicker={onOpenTicker}
+                      ticker={position.executionTicker}
+                    />
                   </td>
                   <td>{formatOptionalDateTime(position.entryTimestamp)}</td>
                   <td>{formatNullableNumber(position.daysHeld)}</td>
@@ -475,6 +504,29 @@ function actionTone(type: DashboardActionType) {
 
 function actionLabel(type: DashboardActionType) {
   return type.replace(/_/g, " ");
+}
+
+function TickerChartButton({
+  ticker,
+  onOpenTicker,
+}: {
+  ticker: string;
+  onOpenTicker?: (ticker: string) => void;
+}) {
+  if (!onOpenTicker) return <>{ticker}</>;
+  return (
+    <button
+      className="ticker-chart-link"
+      onClick={() => onOpenTicker(ticker)}
+      type="button"
+    >
+      {ticker}
+    </button>
+  );
+}
+
+function formatOptionalDate(value: string | null) {
+  return value ? formatDate(value) : "Not supplied";
 }
 
 function formatOptionalDateTime(value: string | null) {

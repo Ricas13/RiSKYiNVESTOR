@@ -182,10 +182,13 @@ function snapshot(overrides: Partial<MultiStrategySnapshot> = {}) {
 }
 
 function signalEvent(overrides: Partial<SignalEvent>): SignalEvent {
+  const occurredAt = overrides.occurredAt ?? "2026-06-20T09:00:00.000Z";
   return {
     eventId: "event-entry",
     eventVersion: 1,
-    occurredAt: "2026-06-20T09:00:00.000Z",
+    occurredAt,
+    signalDate: overrides.signalDate ?? occurredAt.slice(0, 10),
+    generatedAt: overrides.generatedAt ?? "2026-06-21T09:00:00.000Z",
     receivedAt: "2026-06-20T09:01:00.000Z",
     strategyId: "daily-supertrend",
     strategyName: "Daily SuperTrend",
@@ -194,6 +197,7 @@ function signalEvent(overrides: Partial<SignalEvent>): SignalEvent {
     underlyingName: "ARM",
     tradeTicker: "3ARM.L",
     tradeName: "3ARM.L",
+    calculationTicker: "ARM",
     signalState: "actionable_entry",
     previousTrend: "red",
     currentTrend: "green",
@@ -478,10 +482,10 @@ test("dashboard shows bounded recent signal history", () => {
   );
   const historyHtml = html.slice(html.indexOf("Latest scanner audit notes"));
 
-  assert.match(historyHtml, /Recent dashboard history 6/);
-  assert.match(historyHtml, /Recent dashboard history 2/);
-  assert.doesNotMatch(historyHtml, /Recent dashboard history 1/);
-  assert.doesNotMatch(historyHtml, /Recent dashboard history 0/);
+  assert.match(historyHtml, /Recent dashboard history 0/);
+  assert.match(historyHtml, /Recent dashboard history 4/);
+  assert.doesNotMatch(historyHtml, /Recent dashboard history 5/);
+  assert.doesNotMatch(historyHtml, /Recent dashboard history 6/);
 });
 
 test("Alerts history is bounded by default", () => {
@@ -561,6 +565,31 @@ test("action-needed section includes recent entry, exit and risk events", () => 
     model.actionItems.map((item) => item.eventType),
     ["entry", "exit", "risk_on"],
   );
+});
+
+test("dashboard action-needed uses signal date as primary date", () => {
+  const data = dashboard(snapshot(), {
+    signalEvents: {
+      version: 2,
+      isExample: false,
+      events: [
+        signalEvent({
+          eventId: "rebuilt-entry",
+          occurredAt: "2026-06-22T09:00:00.000Z",
+          signalDate: "2026-06-18",
+          generatedAt: "2026-06-22T09:00:00.000Z",
+          reasonText: "Historical rebuilt entry.",
+        }),
+      ],
+    },
+  } as Partial<DashboardData>);
+  const model = buildDashboardCommandCentreModel(data);
+  const html = render(data);
+
+  assert.equal(model.actionItems[0]?.signalDate, "2026-06-18");
+  assert.equal(model.actionItems[0]?.generatedAt, "2026-06-22T09:00:00.000Z");
+  assert.match(html, /Signal date: 18 Jun 2026/);
+  assert.match(html, /Generated: 22 Jun 2026/);
 });
 
 test("dashboard model bounds large alert history while preserving current actions", () => {

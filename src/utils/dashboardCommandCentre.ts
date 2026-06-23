@@ -10,6 +10,11 @@ import {
 } from "./signalMonitorRows";
 import { collectSnapshotPerformanceWarnings } from "./modelWarnings";
 import { currentSignalActions } from "./signalEventAlerts";
+import {
+  canonicalGeneratedAt,
+  canonicalSignalDate,
+  sortStrategyBySignalDate,
+} from "./signalDates";
 
 export type DashboardScannerStatus = "current" | "stale" | "error" | "awaiting";
 export type DashboardActionType =
@@ -36,6 +41,8 @@ export interface DashboardActionItem {
   executionTicker: string;
   eventType: DashboardActionType;
   occurredAt: string;
+  signalDate: string;
+  generatedAt: string;
   reason: string;
   modelPositionOpen: boolean;
 }
@@ -226,6 +233,8 @@ function buildActionItems(
           executionTicker: event.tradeTicker,
           eventType,
           occurredAt: event.occurredAt,
+          signalDate: canonicalSignalDate(event),
+          generatedAt: canonicalGeneratedAt(event),
           reason: event.reasonText,
           modelPositionOpen: Boolean(
             strategy &&
@@ -238,7 +247,11 @@ function buildActionItems(
         },
       ];
     })
-    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+    .sort(
+      (left, right) =>
+        right.signalDate.localeCompare(left.signalDate) ||
+        right.generatedAt.localeCompare(left.generatedAt),
+    );
 }
 
 function buildCurrentModelPositions(strategies: MultiStrategyRecord[]) {
@@ -292,7 +305,7 @@ function findPosition(
 function latestEventReason(strategy: MultiStrategyRecord) {
   return (
     strategy.latestEvent?.reason ??
-    [...strategy.events].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))[0]
+    [...strategy.events].sort(sortStrategyBySignalDate)[0]
       ?.reason ??
     null
   );
