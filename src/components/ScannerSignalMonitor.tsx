@@ -24,8 +24,10 @@ import { Badge, ExpandableRowsControls } from "./ui";
 
 export function ScannerSignalMonitor({
   monitor,
+  onOpenTicker,
 }: {
   monitor: MultiStrategyPublicState;
+  onOpenTicker?: (ticker: string) => void;
 }) {
   const model = React.useMemo(
     () => buildSignalMonitorModel(monitor.snapshot),
@@ -147,16 +149,22 @@ export function ScannerSignalMonitor({
             </div>
           </div>
         ) : (
-          <SuperTrendSignalTable rows={model.rows} />
+          <SuperTrendSignalTable rows={model.rows} onOpenTicker={onOpenTicker} />
         )}
       </article>
 
-      <Sma200Card summary={model.sma200} />
+      <Sma200Card summary={model.sma200} onOpenTicker={onOpenTicker} />
     </section>
   );
 }
 
-function SuperTrendSignalTable({ rows }: { rows: SuperTrendSignalRow[] }) {
+function SuperTrendSignalTable({
+  rows,
+  onOpenTicker,
+}: {
+  rows: SuperTrendSignalRow[];
+  onOpenTicker?: (ticker: string) => void;
+}) {
   const expandable = useExpandableRows(rows);
   return (
     <>
@@ -191,7 +199,12 @@ function SuperTrendSignalTable({ rows }: { rows: SuperTrendSignalRow[] }) {
               <td>
                 <strong>{row.signalTicker || "—"}</strong>
               </td>
-              <td>{row.executionTicker || "—"}</td>
+              <td>
+                <TickerChartButton
+                  onOpenTicker={onOpenTicker}
+                  ticker={row.executionTicker}
+                />
+              </td>
               <td>{row.strategy}</td>
               <td>
                 <Badge tone={statusTone(row.status)}>
@@ -224,7 +237,13 @@ function SuperTrendSignalTable({ rows }: { rows: SuperTrendSignalRow[] }) {
   );
 }
 
-function Sma200Card({ summary }: { summary: Sma200SignalSummary | null }) {
+function Sma200Card({
+  summary,
+  onOpenTicker,
+}: {
+  summary: Sma200SignalSummary | null;
+  onOpenTicker?: (ticker: string) => void;
+}) {
   if (!summary) {
     return (
       <article className="control-panel">
@@ -277,13 +296,19 @@ function Sma200Card({ summary }: { summary: Sma200SignalSummary | null }) {
         />
       </dl>
       {summary.rows.length > 0 && (
-        <Sma200SignalTable rows={summary.rows} />
+        <Sma200SignalTable rows={summary.rows} onOpenTicker={onOpenTicker} />
       )}
     </article>
   );
 }
 
-function Sma200SignalTable({ rows }: { rows: Sma200SignalRow[] }) {
+function Sma200SignalTable({
+  rows,
+  onOpenTicker,
+}: {
+  rows: Sma200SignalRow[];
+  onOpenTicker?: (ticker: string) => void;
+}) {
   const expandable = useExpandableRows(rows);
   return (
     <>
@@ -317,7 +342,12 @@ function Sma200SignalTable({ rows }: { rows: Sma200SignalRow[] }) {
                 <strong>{row.signalTicker || "—"}</strong>
                 {!row.enabled && <small>Disabled</small>}
               </td>
-              <td>{row.executionTicker || "—"}</td>
+              <td>
+                <TickerChartButton
+                  onOpenTicker={onOpenTicker}
+                  ticker={row.executionTicker}
+                />
+              </td>
               <td>
                 <Badge tone={row.currentRegime === "risk_on" ? "green" : "red"}>
                   {row.currentRegime.replace(/_/g, " ")}
@@ -371,6 +401,26 @@ function Fact({ label, value }: { label: string; value: string }) {
       <dt>{label}</dt>
       <dd>{value}</dd>
     </div>
+  );
+}
+
+function TickerChartButton({
+  ticker,
+  onOpenTicker,
+}: {
+  ticker: string;
+  onOpenTicker?: (ticker: string) => void;
+}) {
+  const value = ticker || "—";
+  if (!onOpenTicker || !ticker) return <>{value}</>;
+  return (
+    <button
+      className="ticker-chart-link"
+      onClick={() => onOpenTicker(ticker)}
+      type="button"
+    >
+      {ticker}
+    </button>
   );
 }
 

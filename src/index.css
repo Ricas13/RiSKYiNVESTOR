@@ -5294,3 +5294,102 @@ pre {
     flex-direction: column;
   }
 }
+.ticker-chart-link {
+  align-items: center;
+  background: rgba(96, 165, 250, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  border-radius: 999px;
+  color: var(--accent, #93c5fd);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 0.25rem;
+  margin-left: 0.35rem;
+  padding: 0.16rem 0.5rem;
+}
+
+.ticker-chart-link:hover {
+  background: rgba(96, 165, 250, 0.2);
+}
+
+.strategy-chart-backdrop {
+  align-items: center;
+  background: rgba(2, 6, 23, 0.72);
+  bottom: 0;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 1rem;
+  position: fixed;
+  z-index: 60;
+}
+
+.strategy-chart-modal {
+  background: var(--panel, #101827);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 1rem;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  max-height: min(88vh, 900px);
+  max-width: 980px;
+  overflow: auto;
+  padding: 1rem;
+  width: min(100%, 980px);
+}
+
+.strategy-chart-modal__heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.strategy-chart-modal__heading h2 {
+  margin: 0.15rem 0;
+}
+
+.strategy-chart-plot {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 0.85rem;
+  padding: 0.75rem;
+}
+
+.strategy-chart-marker-panel {
+  margin-top: 1rem;
+}
+
+.strategy-chart-markers {
+  display: grid;
+  gap: 0.6rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.strategy-chart-markers li {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.35rem;
+  grid-template-columns: auto minmax(7rem, auto) 1fr;
+  padding: 0.65rem;
+}
+
+.strategy-chart-markers small {
+  color: var(--muted, #94a3b8);
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 720px) {
+  .strategy-chart-modal__heading,
+  .strategy-chart-markers li {
+    display: block;
+  }
+
+  .strategy-chart-modal {
+    max-height: 94vh;
+  }
+}

@@ -14,10 +14,27 @@ export interface MultiStrategyEvent {
     | "weeklySummary"
     | "scannerError";
   occurredAt: string;
+  signalDate: string;
+  generatedAt?: string;
   signalTicker: string;
   executionTicker: string;
   calculationTicker?: string;
+  price?: number;
   reason: string;
+}
+
+export interface MultiStrategyChartCandle {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
+export interface MultiStrategyChartData {
+  executionTicker: string;
+  candles: MultiStrategyChartCandle[];
 }
 
 export interface ModelPerformanceWarning {
@@ -76,6 +93,7 @@ export interface MultiStrategyRecord {
   regimeChangeEvents?: MultiStrategyEvent[];
   latestEvent: MultiStrategyEvent | null;
   dataFreshness: string | null;
+  chartData?: MultiStrategyChartData[];
   warnings?: ModelPerformanceWarning[];
   diagnostics?: Array<Record<string, unknown>>;
 }
@@ -113,6 +131,7 @@ export const defaultPublicStrategyWarningLimit = 50;
 export const defaultPublicPositionWarningLimit = 10;
 export const defaultPublicClosedTradeLimit = 100;
 export const defaultPublicEquitySnapshotLimit = 500;
+export const defaultPublicChartCandleLimit = 250;
 export const defaultPublicScannerErrorLimit = 25;
 export const defaultPublicStrategyDiagnosticLimit = 100;
 
@@ -134,6 +153,14 @@ function optionalNumber(value: unknown) {
   const number = Number(value);
   if (!Number.isFinite(number)) throw new Error("Invalid numeric value.");
   return number;
+}
+
+function dateOnlyValue(value: unknown, fallback: string) {
+  const text = typeof value === "string" ? value.trim() : "";
+  const candidate = text || fallback;
+  const date = new Date(candidate);
+  if (Number.isNaN(date.getTime())) return fallback.slice(0, 10);
+  return date.toISOString().slice(0, 10);
 }
 
 function numberValue(value: unknown) {
@@ -168,6 +195,12 @@ function eventValue(
   if (Number.isNaN(new Date(occurredAt).getTime())) {
     throw new Error("Event timestamp is invalid.");
   }
+  const signalDate = dateOnlyValue(event.signalDate, occurredAt);
+  const generatedAt =
+    typeof event.generatedAt === "string" &&
+    !Number.isNaN(new Date(event.generatedAt).getTime())
+      ? event.generatedAt
+      : occurredAt;
   const signalTicker = textValue(event.signalTicker, "Signal ticker", 80);
   const executionTicker = textValue(
     event.executionTicker,
@@ -178,15 +211,42 @@ function eventValue(
     typeof event.calculationTicker === "string" && event.calculationTicker.trim()
       ? event.calculationTicker.trim().slice(0, 80)
       : signalTicker;
-  return {
+  const result: MultiStrategyEvent = {
     eventId: textValue(event.eventId, "Event ID", 200),
     strategyId: expectedStrategyId,
     eventType: eventType as MultiStrategyEvent["eventType"],
     occurredAt,
+    signalDate,
+    generatedAt,
     signalTicker,
     executionTicker,
     calculationTicker,
     reason: textValue(event.reason, "Event reason", 1000),
+  };
+  const price = optionalNumber(event.price);
+  if (price !== null) result.price = price;
+  return result;
+}
+
+function chartCandleValue(value: unknown): MultiStrategyChartCandle {
+  const candle = objectValue(value, "Strategy chart candle");
+  return {
+    date: dateOnlyValue(candle.date, ""),
+    open: numberValue(candle.open),
+    high: numberValue(candle.high),
+    low: numberValue(candle.low),
+    close: numberValue(candle.close),
+    volume: optionalNumber(candle.volume) ?? undefined,
+  };
+}
+
+function chartDataValue(value: unknown): MultiStrategyChartData {
+  const chart = objectValue(value, "Strategy chart data");
+  return {
+    executionTicker: textValue(chart.executionTicker, "Chart execution ticker", 80),
+    candles: Array.isArray(chart.candles)
+      ? chart.candles.map(chartCandleValue).slice(-defaultPublicChartCandleLimit)
+      : [],
   };
 }
 
@@ -346,6 +406,9 @@ function strategyValue(value: unknown): MultiStrategyRecord {
       strategy.dataFreshness === undefined
         ? null
         : textValue(strategy.dataFreshness, "Data freshness", 100),
+    chartData: Array.isArray(strategy.chartData)
+      ? strategy.chartData.map(chartDataValue)
+      : [],
     warnings,
     diagnostics,
   };
@@ -447,6 +510,7 @@ export function trimMultiStrategyPublicState(
     positionWarnings?: number;
     closedVirtualTrades?: number;
     equitySnapshots?: number;
+    chartCandles?: number;
     diagnostics?: number;
   } = {},
 ): MultiStrategyPublicState {
@@ -479,6 +543,10 @@ export function trimMultiStrategyPublicState(
     options.equitySnapshots,
     defaultPublicEquitySnapshotLimit,
   );
+  const chartCandles = clampLimit(
+    options.chartCandles,
+    defaultPublicChartCandleLimit,
+  );
   const diagnostics = clampLimit(
     options.diagnostics,
     defaultPublicStrategyDiagnosticLimit,
@@ -507,6 +575,10 @@ export function trimMultiStrategyPublicState(
           closedVirtualTrades,
           strategyWarnings,
         ),
+        chartData: strategy.chartData?.map((chart) => ({
+          ...chart,
+          candles: chart.candles.slice(-chartCandles),
+        })),
         events: latestStrategyEvents(strategy.events, eventsPerStrategy),
         regimeChangeEvents: strategy.regimeChangeEvents
           ? latestStrategyEvents(strategy.regimeChangeEvents, eventsPerStrategy)

@@ -16,8 +16,13 @@ import type {
   SignalState,
 } from "../types";
 import { useExpandableRows } from "../hooks/useExpandableRows";
-import { formatDateTime } from "../utils/format";
+import { formatDate, formatDateTime } from "../utils/format";
 import type { SignalEventAlertMeta } from "../utils/signalEventAlerts";
+import {
+  canonicalGeneratedAt,
+  canonicalSignalDate,
+  sortCanonicalBySignalDate,
+} from "../utils/signalDates";
 import { Badge, ExpandableRowsControls } from "./ui";
 
 function eventTone(type: SignalState) {
@@ -85,13 +90,15 @@ function noActionCopy(scanner: ScannerImportState) {
 export function TodayActionPanel({
   events,
   scanner,
+  onOpenTicker,
 }: {
   events: SignalEvent[];
   scanner: ScannerImportState;
+  onOpenTicker?: (ticker: string) => void;
 }) {
   const actionable = [...events]
     .filter((event) => event.isActionable)
-    .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))[0];
+    .sort(sortCanonicalBySignalDate)[0];
   const reviewCount = events.filter((event) =>
     ["low_liquidity_warning", "scanner_error", "wait_review"].includes(
       event.signalState,
@@ -130,8 +137,20 @@ export function TodayActionPanel({
             <small>
               {actionable.strategyName} · {actionable.riskTier} ·{" "}
               {actionable.allocationPercent}% allocation ·{" "}
-              {formatDateTime(actionable.occurredAt)}
+              Signal date: {formatDate(canonicalSignalDate(actionable))}
             </small>
+            <small>
+              Generated: {formatDateTime(canonicalGeneratedAt(actionable))}
+            </small>
+            {onOpenTicker && (
+              <button
+                className="ticker-chart-link"
+                onClick={() => onOpenTicker(actionable.tradeTicker)}
+                type="button"
+              >
+                Open {actionable.tradeTicker} strategy chart
+              </button>
+            )}
           </div>
         </article>
       ) : (
@@ -163,6 +182,7 @@ export function SignalEventList({
   emptyCopy = "Awaiting scanner data.",
   onAcknowledge,
   eventMeta,
+  onOpenTicker,
 }: {
   events: SignalEvent[];
   deliveries?: NotificationDelivery[];
@@ -171,9 +191,10 @@ export function SignalEventList({
   emptyCopy?: string;
   onAcknowledge?: (event: SignalEvent) => Promise<void>;
   eventMeta?: (event: SignalEvent) => SignalEventAlertMeta;
+  onOpenTicker?: (ticker: string) => void;
 }) {
   const visible = [...events]
-    .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
+    .sort(sortCanonicalBySignalDate)
     .slice(0, limit);
 
   if (!visible.length) return <div className="empty-state">{emptyCopy}</div>;
@@ -213,12 +234,21 @@ export function SignalEventList({
                     {meta.statusLabel}
                   </Badge>
                 )}
-                <span>{formatDateTime(event.occurredAt)}</span>
+                <span>Signal date: {formatDate(canonicalSignalDate(event))}</span>
                 <span>{event.strategyName}</span>
               </div>
               <h3>
                 {event.underlyingTicker} → {event.tradeTicker}
               </h3>
+              {onOpenTicker && (
+                <button
+                  className="ticker-chart-link"
+                  onClick={() => onOpenTicker(event.tradeTicker)}
+                  type="button"
+                >
+                  Open {event.tradeTicker} strategy chart
+                </button>
+              )}
               <p>{event.reasonText}</p>
               {!compact && (
                 <small>
@@ -258,6 +288,10 @@ export function SignalEventList({
               <div>
                 <dt>Actionable</dt>
                 <dd>{event.isActionable ? "yes" : "no"}</dd>
+              </div>
+              <div>
+                <dt>Generated</dt>
+                <dd>{formatDateTime(canonicalGeneratedAt(event))}</dd>
               </div>
               <div>
                 <dt>Acknowledged</dt>

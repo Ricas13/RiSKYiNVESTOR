@@ -3,8 +3,10 @@ import test from "node:test";
 import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ScannerSignalMonitor } from "../src/components/ScannerSignalMonitor";
+import { StrategyTickerChart } from "../src/components/StrategyTickerChart";
 import { expandableRows } from "../src/utils/expandableRows";
 import type {
+  ManualTrade,
   MultiStrategyPublicState,
   MultiStrategyRecord,
   MultiStrategySnapshot,
@@ -224,6 +226,19 @@ test("Signal Monitor renders Daily SuperTrend ticker pairs from scanner output",
   assert.match(html, /Daily SuperTrend/);
 });
 
+test("Signal Monitor exposes execution ticker chart drilldown controls", () => {
+  const html = renderToStaticMarkup(
+    createElement(ScannerSignalMonitor, {
+      monitor: monitor(snapshot()),
+      onOpenTicker: () => undefined,
+    }),
+  );
+
+  assert.match(html, /ticker-chart-link/);
+  assert.match(html, />3USL\.L</);
+  assert.match(html, />QQQ3\.L</);
+});
+
 test("expandable row helper shows all rows at ten or fewer and bounds longer lists", () => {
   const tenRows = Array.from({ length: 10 }, (_, index) => index);
   const twelveRows = Array.from({ length: 12 }, (_, index) => index);
@@ -393,4 +408,134 @@ test("Signal Monitor renders SMA200 ticker-pair book rows", () => {
   assert.match(html, /3NVD\.L/);
   assert.match(html, /NVDA closed below SMA200/);
   assert.match(html, /risk on/);
+});
+
+test("strategy ticker chart renders bounded candle data and signal-date markers", () => {
+  const candles = Array.from({ length: 300 }, (_, index) => ({
+    date: `2026-06-${String((index % 28) + 1).padStart(2, "0")}`,
+    open: 100 + index,
+    high: 101 + index,
+    low: 99 + index,
+    close: 100 + index,
+    volume: 1_000_000,
+  }));
+  const monitorValue = monitor(
+    snapshot({
+      strategies: [
+        strategy("daily-supertrend", {
+          chartData: [{ executionTicker: "3USL.L", candles }],
+          events: [
+            {
+              eventId: "daily-supertrend:chart-entry",
+              strategyId: "daily-supertrend",
+              eventType: "entry",
+              occurredAt: "2026-06-22T09:00:00.000Z",
+              signalDate: "2026-06-18",
+              generatedAt: "2026-06-22T09:00:00.000Z",
+              signalTicker: "SPY",
+              executionTicker: "3USL.L",
+              calculationTicker: "SPY",
+              price: 117,
+              reason: "SuperTrend BUY on signal ticker.",
+            },
+            {
+              eventId: "daily-supertrend:chart-exit",
+              strategyId: "daily-supertrend",
+              eventType: "exit",
+              occurredAt: "2026-06-22T09:00:00.000Z",
+              signalDate: "2026-06-20",
+              generatedAt: "2026-06-22T09:00:00.000Z",
+              signalTicker: "SPY",
+              executionTicker: "3USL.L",
+              calculationTicker: "3USL.L",
+              price: 119,
+              reason: "SuperTrend SELL on execution ticker.",
+            },
+          ],
+        }),
+        strategy("nasdaq-sma200-3x", {
+          chartData: [{ executionTicker: "3USL.L", candles }],
+          events: [
+            {
+              eventId: "nasdaq-sma200-3x:chart-entry",
+              strategyId: "nasdaq-sma200-3x",
+              eventType: "entry",
+              occurredAt: "2026-06-22T09:00:00.000Z",
+              signalDate: "2026-06-19",
+              generatedAt: "2026-06-22T09:00:00.000Z",
+              signalTicker: "SPY",
+              executionTicker: "3USL.L",
+              calculationTicker: "SPY",
+              price: 118,
+              reason: "SMA200 risk on.",
+            },
+          ],
+        }),
+      ],
+    }),
+  );
+  const manualTrades: ManualTrade[] = [
+    {
+      id: "manual-1",
+      strategyName: "Manual / Discretionary",
+      assetName: "3USL.L",
+      ticker: "3USL.L",
+      direction: "long",
+      entryDate: "2026-06-18",
+      entryPrice: 117,
+      quantity: 2,
+      amountInvested: 234,
+      fees: 1,
+      notes: "Manual action.",
+      source: "manual",
+      referenceLink: "",
+      currentPrice: 119,
+      exits: [
+        {
+          id: "exit-1",
+          exitDate: "2026-06-20",
+          exitPrice: 119,
+          quantitySold: 2,
+          fees: 1,
+          reason: "Closed manually.",
+          notes: "",
+        },
+      ],
+      createdAt: "2026-06-18T09:00:00.000Z",
+      updatedAt: "2026-06-20T09:00:00.000Z",
+    },
+  ];
+  const html = renderToStaticMarkup(
+    createElement(StrategyTickerChart, {
+      ticker: "3USL.L",
+      monitor: monitorValue,
+      manualTrades,
+      onClose: () => undefined,
+    }),
+  );
+
+  assert.match(html, /3USL\.L strategy chart/);
+  assert.match(html, /data-candle-count="250"/);
+  assert.match(html, /SuperTrend entry/);
+  assert.match(html, /SuperTrend exit/);
+  assert.match(html, /SMA200 entry/);
+  assert.match(html, /Manual buy/);
+  assert.match(html, /Manual sell/);
+  assert.match(html, /Calculated on: SPY/);
+  assert.match(html, /Calculated on: 3USL\.L/);
+  assert.match(html, /18 Jun 2026/);
+});
+
+test("strategy ticker chart shows empty state without candle data", () => {
+  const html = renderToStaticMarkup(
+    createElement(StrategyTickerChart, {
+      ticker: "MISSING.L",
+      monitor: monitor(snapshot()),
+      manualTrades: [],
+      onClose: () => undefined,
+    }),
+  );
+
+  assert.match(html, /No chart data available for this ticker yet/);
+  assert.match(html, /No strategy markers available for this ticker yet/);
 });

@@ -5,6 +5,7 @@ import type {
   MultiStrategySnapshot,
   StrategyEventType,
 } from "../types";
+import { sortStrategyBySignalDate, strategySignalDate } from "./signalDates";
 
 export type SignalRowStatus = "in" | "out" | "awaiting" | "error";
 
@@ -159,10 +160,10 @@ function toSuperTrendSignalRow(
     status,
     statusLabel: rowStatusLabel(status),
     latestEventType: latestEvent?.eventType ?? "none",
-    latestSignalDate: latestEvent?.occurredAt ?? null,
+    latestSignalDate: strategySignalDate(latestEvent),
     changedThisWeek:
       latestEvent?.eventType === "entry" || latestEvent?.eventType === "exit"
-        ? isSameUtcWeek(latestEvent.occurredAt, anchorDate)
+        ? isSameUtcWeek(strategySignalDate(latestEvent) ?? latestEvent.occurredAt, anchorDate)
         : false,
     modelPosition: position ? "open" : "none",
     openPnlValue: position?.openPnlValue ?? null,
@@ -191,7 +192,7 @@ function toSma200Summary(strategy: MultiStrategyRecord): Sma200SignalSummary {
     currentRegime: strategy.currentState,
     rows,
     latestEventType: latestEvent?.eventType ?? "none",
-    latestSignalDate: latestEvent?.occurredAt ?? null,
+    latestSignalDate: strategySignalDate(latestEvent),
     modelPosition: position ? "open" : "none",
     openPnlValue: position?.openPnlValue ?? null,
     openPnlPercent: position?.openPnlPercent ?? null,
@@ -234,7 +235,7 @@ function smaRows(strategy: MultiStrategyRecord): Sma200SignalRow[] {
       enabled: row.enabled,
       currentRegime: position ? "risk_on" : "risk_off",
       latestEventType: latestEvent?.eventType ?? "none",
-      latestSignalDate: latestEvent?.occurredAt ?? null,
+      latestSignalDate: strategySignalDate(latestEvent),
       modelPosition: position ? "open" : "none",
       openPnlValue: position?.openPnlValue ?? null,
       openPnlPercent: position?.openPnlPercent ?? null,
@@ -323,7 +324,7 @@ function latestEventOfType(
 }
 
 function latestEventFrom(events: MultiStrategyEvent[]) {
-  return [...events].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))[0];
+  return [...events].sort(sortStrategyBySignalDate)[0];
 }
 
 function sortSignalRows(
