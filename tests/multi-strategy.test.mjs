@@ -510,12 +510,13 @@ test("scanner schema preserves skipped SuperTrend entries as diagnostics", () =>
     signalTicker: "COIN",
     executionTicker: "3CON.L",
     calculationTicker: "COIN",
+    triggerTicker: "COIN",
     holdSafetyTicker: "3CON.L",
     sourceOfTruth: false,
     severity: "diagnostic",
     price: 123.45,
     reason:
-      "Signal ticker BUY skipped because execution ticker was already out/red.",
+      "Signal ticker gave BUY, but execution ticker was red/out, so entry was delayed.",
   });
 
   const valid = validateMultiStrategySnapshot(value);
@@ -527,6 +528,7 @@ test("scanner schema preserves skipped SuperTrend entries as diagnostics", () =>
   assert.equal(skipped?.signalTicker, "COIN");
   assert.equal(skipped?.executionTicker, "3CON.L");
   assert.equal(skipped?.calculationTicker, "COIN");
+  assert.equal(skipped?.triggerTicker, "COIN");
   assert.equal(skipped?.holdSafetyTicker, "3CON.L");
   assert.equal(skipped?.sourceOfTruth, false);
   assert.equal(skipped?.severity, "diagnostic");

@@ -29,6 +29,8 @@ interface ChartMarker {
   signalTicker: string;
   executionTicker: string;
   calculationTicker: string;
+  triggerTicker: string;
+  reason: string;
   source: "scanner/model" | "manual";
 }
 
@@ -119,7 +121,7 @@ export function StrategyTickerChart({
               {model.markers.map((marker) => (
                 <li
                   key={marker.id}
-                  title={`${marker.strategyName}; ${marker.eventType}; Signal date: ${marker.date}; Calculated on: ${marker.calculationTicker}; Signal ticker: ${marker.signalTicker}; Execution ticker: ${marker.executionTicker}; Source: ${marker.source}`}
+                  title={`${marker.strategyName}; ${marker.eventType}; Signal date: ${marker.date}; Calculated on: ${marker.calculationTicker}; Triggered by: ${marker.triggerTicker}; Signal ticker: ${marker.signalTicker}; Execution ticker: ${marker.executionTicker}; Reason: ${marker.reason}; Source: ${marker.source}`}
                 >
                   <Badge tone={marker.eventType.includes("entry") || marker.label.includes("buy") ? "green" : "red"}>
                     {marker.label}
@@ -192,6 +194,8 @@ function strategyEventMarker(
     signalTicker: event.signalTicker,
     executionTicker: event.executionTicker,
     calculationTicker: event.calculationTicker ?? event.signalTicker,
+    triggerTicker: event.triggerTicker ?? event.calculationTicker ?? event.signalTicker,
+    reason: event.reason,
     source: "scanner/model",
   };
 }
@@ -208,6 +212,8 @@ function manualTradeMarkers(trade: ManualTrade, ticker: string): ChartMarker[] {
     signalTicker: trade.ticker,
     executionTicker: trade.ticker,
     calculationTicker: trade.ticker,
+    triggerTicker: trade.ticker,
+    reason: trade.notes || "Manual trade entry.",
     source: "manual",
   };
   const exits = trade.exits.map((exit) => ({
@@ -220,6 +226,8 @@ function manualTradeMarkers(trade: ManualTrade, ticker: string): ChartMarker[] {
     signalTicker: trade.ticker,
     executionTicker: trade.ticker,
     calculationTicker: trade.ticker,
+    triggerTicker: trade.ticker,
+    reason: exit.reason || exit.notes || "Manual trade exit.",
     source: "manual" as const,
   }));
   return [entry, ...exits];

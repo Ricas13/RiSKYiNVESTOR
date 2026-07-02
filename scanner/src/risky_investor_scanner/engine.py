@@ -162,7 +162,7 @@ class ScannerEngine:
             if not entry_points or not exit_points or not execution_bars:
                 continue
             row_key = _row_key(row)
-            row_data[row_key] = {'row': row, 'executionBars': execution_bars, 'exitPoints': exit_points}
+            row_data[row_key] = {'row': row, 'executionBars': execution_bars, 'entryPoints': entry_points, 'exitPoints': exit_points}
             previous_entry_state = 'out'
             for point in entry_points:
                 point_day = date.fromisoformat(point.date)
@@ -170,7 +170,7 @@ class ScannerEngine:
                 if point.state != previous_entry_state:
                     diagnostics.append(_supertrend_diagnostic(row, point, previous_entry_state, row.signal_ticker))
                     if previous_entry_state == 'out' and point.state == 'in':
-                        transitions.setdefault(point_day, []).append({'row': row, 'rowKey': row_key, 'action': 'entry', 'calculationTicker': row.signal_ticker})
+                        transitions.setdefault(point_day, []).append({'row': row, 'rowKey': row_key, 'action': 'entry', 'calculationTicker': row.signal_ticker, 'triggerTicker': row.signal_ticker, 'triggerSource': 'signal'})
                 previous_entry_state = point.state
             previous_exit_state = 'out'
             for point in exit_points:
@@ -178,8 +178,10 @@ class ScannerEngine:
                 market_days.add(point_day)
                 if point.state != previous_exit_state:
                     diagnostics.append(_supertrend_diagnostic(row, point, previous_exit_state, row.execution_ticker))
-                    if previous_exit_state == 'in' and point.state == 'out':
-                        transitions.setdefault(point_day, []).append({'row': row, 'rowKey': row_key, 'action': 'exit', 'calculationTicker': row.execution_ticker})
+                    if previous_exit_state == 'out' and point.state == 'in':
+                        transitions.setdefault(point_day, []).append({'row': row, 'rowKey': row_key, 'action': 'entry', 'calculationTicker': row.execution_ticker, 'triggerTicker': row.execution_ticker, 'triggerSource': 'execution'})
+                    elif previous_exit_state == 'in' and point.state == 'out':
+                        transitions.setdefault(point_day, []).append({'row': row, 'rowKey': row_key, 'action': 'exit', 'calculationTicker': row.execution_ticker, 'triggerTicker': row.execution_ticker, 'triggerSource': 'execution'})
                 previous_exit_state = point.state
         if not row_data or not market_days:
             if freshness:
@@ -203,10 +205,17 @@ class ScannerEngine:
                 if transition['action'] == 'entry':
                     if row_key in positions:
                         continue
+                    signal_state = _supertrend_point_on_or_before(
+                        row_data[row_key]['entryPoints'], current_day
+                    )
                     execution_state = _supertrend_point_on_or_before(
                         row_data[row_key]['exitPoints'], current_day
                     )
+                    if signal_state is None or signal_state.state != 'in':
+                        continue
                     if execution_state is None or execution_state.state != 'in':
+                        if transition.get('triggerSource') != 'signal':
+                            continue
                         skipped_at = current_day.isoformat()
                         identifier = event_id(SUPER_ID, 'skipped_entry', skipped_at, row_key)
                         events.append(
@@ -217,8 +226,9 @@ class ScannerEngine:
                                 skipped_at,
                                 row.signal_ticker,
                                 row.execution_ticker,
-                                'Signal ticker BUY skipped because execution ticker was already out/red.',
+                                'Signal ticker gave BUY, but execution ticker was red/out, so entry was delayed.',
                                 calculation_ticker=transition['calculationTicker'],
+                                trigger_ticker=transition.get('triggerTicker'),
                                 price=execution_bar.close,
                                 hold_safety_ticker=row.execution_ticker,
                                 source_of_truth=False,
@@ -236,11 +246,16 @@ class ScannerEngine:
                     if quantity <= 0:
                         continue
                     opened = current_day.isoformat()
-                    position = {'positionId': event_id(SUPER_ID, 'position', opened, row_key), 'label': 'Virtual model position', 'signalTicker': row.signal_ticker, 'executionTicker': row.execution_ticker, 'state': 'in', 'entryTimestamp': opened, 'entryPrice': execution_bar.close, 'latestPrice': execution_bar.close, 'quantity': quantity, 'allocation': allocation, 'openPnlValue': -cost, 'openPnlPercent': -cost / allocation * 100, 'daysHeld': 0, 'latestSignal': 'entry', 'reason': 'SuperTrend BUY on signal ticker; opened leveraged execution ticker.'}
+                    entry_reason = (
+                        'Execution ticker turned green while signal ticker was already green; opened leveraged position.'
+                        if transition.get('triggerSource') == 'execution'
+                        else 'Signal ticker turned green while execution ticker was already green; opened leveraged position.'
+                    )
+                    position = {'positionId': event_id(SUPER_ID, 'position', opened, row_key), 'label': 'Virtual model position', 'signalTicker': row.signal_ticker, 'executionTicker': row.execution_ticker, 'state': 'in', 'entryTimestamp': opened, 'entryPrice': execution_bar.close, 'latestPrice': execution_bar.close, 'quantity': quantity, 'allocation': allocation, 'openPnlValue': -cost, 'openPnlPercent': -cost / allocation * 100, 'daysHeld': 0, 'latestSignal': 'entry', 'reason': entry_reason}
                     positions[row_key] = position
                     cash = max(0.0, cash - allocation)
                     identifier = event_id(SUPER_ID, 'entry', opened, row_key)
-                    events.append(_event(identifier, SUPER_ID, 'entry', opened, row.signal_ticker, row.execution_ticker, 'SuperTrend BUY on signal ticker; opened leveraged execution ticker.', calculation_ticker=transition['calculationTicker'], price=execution_bar.close))
+                    events.append(_event(identifier, SUPER_ID, 'entry', opened, row.signal_ticker, row.execution_ticker, entry_reason, calculation_ticker=transition['calculationTicker'], trigger_ticker=transition.get('triggerTicker'), price=execution_bar.close))
                 elif transition['action'] == 'exit' and row_key in positions:
                     position = positions[row_key]
                     proceeds = position['quantity'] * execution_bar.close
@@ -249,11 +264,12 @@ class ScannerEngine:
                     pnl = proceeds - position['allocation']
                     closed_at = current_day.isoformat()
                     entry_day = datetime.fromisoformat(position['entryTimestamp']).date()
-                    closed.append({**position, 'state': 'closed', 'exitTimestamp': closed_at, 'exitPrice': execution_bar.close, 'latestPrice': execution_bar.close, 'openPnlValue': pnl, 'openPnlPercent': pnl / max(position['allocation'], 1e-06) * 100, 'daysHeld': (current_day - entry_day).days, 'pnlValue': pnl, 'pnlPercent': pnl / max(position['allocation'], 1e-06) * 100, 'exitReason': 'SuperTrend SELL on execution ticker; closed leveraged position.'})
+                    exit_reason = 'Execution ticker turned red; closed leveraged position.'
+                    closed.append({**position, 'state': 'closed', 'exitTimestamp': closed_at, 'exitPrice': execution_bar.close, 'latestPrice': execution_bar.close, 'openPnlValue': pnl, 'openPnlPercent': pnl / max(position['allocation'], 1e-06) * 100, 'daysHeld': (current_day - entry_day).days, 'pnlValue': pnl, 'pnlPercent': pnl / max(position['allocation'], 1e-06) * 100, 'exitReason': exit_reason})
                     cash += proceeds
                     del positions[row_key]
                     identifier = event_id(SUPER_ID, 'exit', closed_at, row_key)
-                    events.append(_event(identifier, SUPER_ID, 'exit', closed_at, row.signal_ticker, row.execution_ticker, 'SuperTrend SELL on execution ticker; closed leveraged position.', calculation_ticker=transition['calculationTicker'], price=execution_bar.close))
+                    events.append(_event(identifier, SUPER_ID, 'exit', closed_at, row.signal_ticker, row.execution_ticker, exit_reason, calculation_ticker=transition['calculationTicker'], trigger_ticker=transition.get('triggerTicker'), price=execution_bar.close))
             invested = _refresh_supertrend_positions(positions, row_data, current_day)
             equity.append({'date': current_day.isoformat(), 'value': cash + invested})
         invested = _refresh_supertrend_positions(positions, row_data, sorted(market_days)[-1])
@@ -506,12 +522,15 @@ def _event(
     reason: str,
     *,
     calculation_ticker: str | None = None,
+    trigger_ticker: str | None = None,
     price: float | None = None,
     hold_safety_ticker: str | None = None,
     source_of_truth: bool | None = None,
     severity: str | None = None,
 ) -> dict[str, Any]:
     event = {'eventId': identifier, 'strategyId': strategy_id, 'eventType': event_type, 'occurredAt': occurred_at, 'signalDate': _signal_date(occurred_at), 'signalTicker': signal_ticker, 'executionTicker': execution_ticker, 'calculationTicker': calculation_ticker or signal_ticker, 'reason': reason}
+    if trigger_ticker:
+        event['triggerTicker'] = trigger_ticker
     if price is not None:
         event['price'] = price
     if hold_safety_ticker:
