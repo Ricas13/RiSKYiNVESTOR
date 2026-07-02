@@ -326,6 +326,7 @@ export interface MultiStrategyEvent {
   signalTicker: string;
   executionTicker: string;
   calculationTicker?: string;
+  triggerTicker?: string;
   holdSafetyTicker?: string;
   price?: number;
   sourceOfTruth?: boolean;

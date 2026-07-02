@@ -578,7 +578,7 @@ test("skipped SuperTrend entries are not current dashboard actions", () => {
     allocationPercent: 0,
     reasonCode: "strategy_skipped_entry",
     reasonText:
-      "Signal ticker BUY skipped because execution ticker was already out/red.",
+      "Signal ticker gave BUY, but execution ticker was red/out, so entry was delayed.",
     isActionable: false,
     discordDeliveryEligible: false,
   });

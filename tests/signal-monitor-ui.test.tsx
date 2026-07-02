@@ -435,8 +435,10 @@ test("strategy ticker chart renders bounded candle data and signal-date markers"
               signalTicker: "SPY",
               executionTicker: "3USL.L",
               calculationTicker: "SPY",
+              triggerTicker: "SPY",
               price: 117,
-              reason: "SuperTrend BUY on signal ticker.",
+              reason:
+                "Signal ticker turned green while execution ticker was already green; opened leveraged position.",
             },
             {
               eventId: "daily-supertrend:chart-exit",
@@ -448,8 +450,24 @@ test("strategy ticker chart renders bounded candle data and signal-date markers"
               signalTicker: "SPY",
               executionTicker: "3USL.L",
               calculationTicker: "3USL.L",
+              triggerTicker: "3USL.L",
               price: 119,
-              reason: "SuperTrend SELL on execution ticker.",
+              reason: "Execution ticker turned red; closed leveraged position.",
+            },
+            {
+              eventId: "daily-supertrend:chart-case-b-entry",
+              strategyId: "daily-supertrend",
+              eventType: "entry",
+              occurredAt: "2026-06-22T09:00:00.000Z",
+              signalDate: "2026-06-21",
+              generatedAt: "2026-06-22T09:00:00.000Z",
+              signalTicker: "VT",
+              executionTicker: "3USL.L",
+              calculationTicker: "3USL.L",
+              triggerTicker: "3USL.L",
+              price: 120,
+              reason:
+                "Execution ticker turned green while signal ticker was already green; opened leveraged position.",
             },
             {
               eventId: "daily-supertrend:chart-skipped-entry",
@@ -461,12 +479,13 @@ test("strategy ticker chart renders bounded candle data and signal-date markers"
               signalTicker: "COIN",
               executionTicker: "3USL.L",
               calculationTicker: "COIN",
+              triggerTicker: "COIN",
               holdSafetyTicker: "3USL.L",
               sourceOfTruth: false,
               severity: "diagnostic",
               price: 117,
               reason:
-                "Signal ticker BUY skipped because execution ticker was already out/red.",
+                "Signal ticker gave BUY, but execution ticker was red/out, so entry was delayed.",
             },
           ],
         }),
@@ -535,6 +554,10 @@ test("strategy ticker chart renders bounded candle data and signal-date markers"
   assert.match(html, /data-candle-count="250"/);
   assert.match(html, /SuperTrend entry/);
   assert.match(html, /SuperTrend exit/);
+  assert.match(html, /Signal ticker turned green while execution ticker was already green/);
+  assert.match(html, /Execution ticker turned green while signal ticker was already green/);
+  assert.match(html, /21 Jun 2026/);
+  assert.match(html, /Triggered by: 3USL\.L/);
   assert.doesNotMatch(html, /skipped_entry/);
   assert.doesNotMatch(html, /Skipped entry/);
   assert.match(html, /SMA200 entry/);

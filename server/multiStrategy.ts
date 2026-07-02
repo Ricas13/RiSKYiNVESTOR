@@ -20,6 +20,7 @@ export interface MultiStrategyEvent {
   signalTicker: string;
   executionTicker: string;
   calculationTicker?: string;
+  triggerTicker?: string;
   holdSafetyTicker?: string;
   price?: number;
   sourceOfTruth?: boolean;
@@ -232,6 +233,9 @@ function eventValue(
   if (price !== null) result.price = price;
   if (typeof event.holdSafetyTicker === "string" && event.holdSafetyTicker.trim()) {
     result.holdSafetyTicker = event.holdSafetyTicker.trim().slice(0, 80);
+  }
+  if (typeof event.triggerTicker === "string" && event.triggerTicker.trim()) {
+    result.triggerTicker = event.triggerTicker.trim().slice(0, 80);
   }
   if (typeof event.sourceOfTruth === "boolean") {
     result.sourceOfTruth = event.sourceOfTruth;
